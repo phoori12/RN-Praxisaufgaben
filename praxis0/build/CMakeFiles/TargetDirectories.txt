@@ -1,5 +1,0 @@
-/home/retsu/RN-Praxisaufgaben/praxis0/build/CMakeFiles/edit_cache.dir
-/home/retsu/RN-Praxisaufgaben/praxis0/build/CMakeFiles/package_source.dir
-/home/retsu/RN-Praxisaufgaben/praxis0/build/CMakeFiles/rebuild_cache.dir
-/home/retsu/RN-Praxisaufgaben/praxis0/build/CMakeFiles/package.dir
-/home/retsu/RN-Praxisaufgaben/praxis0/build/CMakeFiles/hello_world.dir
