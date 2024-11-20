@@ -18,9 +18,13 @@
 #define HEADER_SIZE 256
 #define CONTENT_SIZE 256
 
-#define BAD_REQUEST "HTTP/1.1 400 Bad Request\r\n\r\n\r\n"
-#define GET_REQUEST "HTTP/1.1 404 GET Request\r\n\r\n\r\n"
-#define ETC_REQUEST "HTTP/1.1 501 ETC Request\r\n\r\n\r\n"
+#define METHOD_SIZE 10
+#define URI_SIZE 256
+#define HTTP_VERSION_SIZE 20
+
+#define BAD_REQUEST "HTTP/1.1 400 Bad Request\r\n\r\n"
+#define GET_REQUEST "HTTP/1.1 404 GET Request\r\n\r\n"
+#define ETC_REQUEST "HTTP/1.1 501 ETC Request\r\n\r\n"
 
 static struct sockaddr_in derive_sockaddr(const char* host, const char* port);
 void *get_in_addr(struct sockaddr *sa);
@@ -34,7 +38,7 @@ int main(int argc, char *argv[]) {
 
     int status, sockfd, new_fd;
     int optval = 1;
-    struct addrinfo hints, *res;
+    struct addrinfo hints, *res, *p;
     struct sockaddr_storage their_addr;
     struct sigaction sa;
     char s[INET6_ADDRSTRLEN];
@@ -51,16 +55,32 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    
+    // loop through all the results and bind to the first we can
+    for(p = res; p != NULL; p = p->ai_next) {
+        if ((sockfd = socket(p->ai_family, p->ai_socktype,
+                p->ai_protocol)) == -1) {
+            perror("server: socket");
+            continue;
+        }
+
+        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval,
+                sizeof(int)) == -1) {
+            perror("setsockopt");
+            exit(1);
+        }
+
+        if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(sockfd);
+            perror("server: bind");
+            continue;
+        }
+
+        break;
+    }
+
     // struct sockaddr_in _sockaddr = derive_sockaddr(argv[1], argv[2]);
     // printf("PARSED ADDR: %d\n", _sockaddr.sin_addr.s_addr);
     // printf("PARSED PORT: %d\n", _sockaddr.sin_port);
-    
-    bind(sockfd, res->ai_addr, res->ai_addrlen);
-
-    // set SO_REUSEADDR on a socket to true (1):
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof optval);
 
     printf("Listen Status: %d\n", listen(sockfd, BACKLOG));
 
@@ -74,9 +94,8 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-
-
-    while(1) {  // main accept() loop
+    // Main accept() loop //
+    while(1) {  
         addr_size = sizeof their_addr;
         new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &addr_size);
         if (new_fd == -1) {
@@ -153,7 +172,6 @@ int main(int argc, char *argv[]) {
                 // }
 
                 // Send a reply for the current request
-
                 // printf("Server will reply %d\n", request_status);
                 char *msg = "\r\n";
 
@@ -166,13 +184,13 @@ int main(int argc, char *argv[]) {
                 {
                     msg = ETC_REQUEST;
                 }
-                printf("sending %s\n", msg);
+                // printf("sending %s\n", msg);
                 int len;
                 len = strlen(msg);
                 int bytes_sent = send(new_fd, msg, len, 0);
                 if (bytes_sent < 0) {
                     perror("send failed");
-                    break; // Exit the loop
+                    break; 
                 }
                 printf("sent %s\n", msg);
             }
@@ -180,7 +198,7 @@ int main(int argc, char *argv[]) {
             close(new_fd);
             exit(0);
         }
-        close(new_fd);  // parent doesn't need this
+        close(new_fd);
     }
 
     return 0;
@@ -230,9 +248,8 @@ void *get_in_addr(struct sockaddr *sa)
 }
 
 int validate_first_token(const char *token) {
-    char method[10], uri[100], http_version[20];
+    char method[METHOD_SIZE], uri[URI_SIZE], http_version[HTTP_VERSION_SIZE];
 
-    // Parse the token into three parts: Method, URI, and HTTPVersion
     int num_parts = sscanf(token, "%s %s %s", method, uri, http_version);
 
     // Ensure it has exactly three parts
@@ -261,27 +278,22 @@ int validate_first_token(const char *token) {
 }
 
 int validate_key_value_token(const char *token) {
-    // Find the colon in the token
     const char *colon_pos = strchr(token, ':');
     if (!colon_pos) {
-        return 0; // No colon found, invalid format
+        return 0; 
     }
 
-    // Ensure there's at least one space after the colon
     if (*(colon_pos + 1) != ' ') {
-        return 0; // No space after the colon, invalid format
+        return 0; 
     }
 
-    // Ensure the key (before the colon) is non-empty
     if (colon_pos == token) {
-        return 0; // Key is empty
+        return 0; 
     }
 
-    // Ensure the value (after the colon and space) is non-empty
     if (strlen(colon_pos + 2) == 0) {
-        return 0; // Value is empty
+        return 0; 
     }
 
-    // All checks passed
     return 1;
 }
