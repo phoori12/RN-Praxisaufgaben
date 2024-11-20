@@ -14,21 +14,31 @@
 #define BACKLOG 10
 #define BUFFER_SIZE 8192
 
+#define MAX_HEADER 40
+#define HEADER_SIZE 256
+#define CONTENT_SIZE 256
+
+#define BAD_REQUEST "HTTP/1.1 400 Bad Request\r\n\r\n\r\n"
+#define GET_REQUEST "HTTP/1.1 404 GET Request\r\n\r\n\r\n"
+#define ETC_REQUEST "HTTP/1.1 501 ETC Request\r\n\r\n\r\n"
 
 static struct sockaddr_in derive_sockaddr(const char* host, const char* port);
 void *get_in_addr(struct sockaddr *sa);
 void sigchld_handler(int s);
+int validate_first_token(const char *token);
+int validate_key_value_token(const char *token);
 
 int main(int argc, char *argv[]) {
     // printf("ADDR: %s\n", argv[1]);
     // printf("PORT: %s\n", argv[2]);
 
-    int status, sockfd;
+    int status, sockfd, new_fd;
     int optval = 1;
     struct addrinfo hints, *res;
     struct sockaddr_storage their_addr;
     struct sigaction sa;
     char s[INET6_ADDRSTRLEN];
+    socklen_t addr_size = sizeof their_addr;
     
     memset(&hints, 0, sizeof hints); // make sure the struct is empty
     hints.ai_family = AF_INET;
@@ -64,8 +74,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    socklen_t addr_size = sizeof their_addr;
-    int new_fd;
+
 
     while(1) {  // main accept() loop
         addr_size = sizeof their_addr;
@@ -85,9 +94,7 @@ int main(int argc, char *argv[]) {
 
             char buffer[BUFFER_SIZE];
             int bytes_received;
-            char *msg = "Reply\r\n\r\n";
-            int len, bytes_sent;
-            len = strlen(msg);
+            
 
             while (1) {
                 // Receive data from the client
@@ -110,8 +117,58 @@ int main(int argc, char *argv[]) {
 
                 printf("Received %d bytes: %s\n", bytes_received, buffer);
 
+                // Parse request
+
+                char *token;
+                char tokens[MAX_HEADER][HEADER_SIZE];
+                int token_count = 0;
+                int request_status;
+
+                // Use strtok to split the string
+                token = strtok(buffer, "\r\n");
+                while (token != NULL && token_count < MAX_HEADER) {
+                    strncpy(tokens[token_count], token, HEADER_SIZE - 1);
+                    tokens[token_count][HEADER_SIZE - 1] = '\0'; // Ensure null-termination
+                    token_count++;
+                    token = strtok(NULL, "\r\n");
+                }
+
+                // Start Line 
+                printf("Checking request\n");
+                request_status = validate_first_token(tokens[0]);
+                // printf("First line request type: %d\n", request_status);
+
+                // Header and keys (rest)
+                for (int i = 1;i < token_count;i++) {
+                    if (validate_key_value_token(tokens[i]) == 0) {
+                        request_status = 400;
+                    }
+                }
+                // printf("Rest request type: %d\n", request_status);
+
+                // Print the resulting tokens
+                // printf("Split tokens:\n");
+                // for (int i = 0; i < token_count; i++) {
+                //     printf("Token %d: %s\n", i + 1, tokens[i]);
+                // }
+
                 // Send a reply for the current request
-            
+
+                // printf("Server will reply %d\n", request_status);
+                char *msg = "\r\n";
+
+                if (request_status == 400) {
+                    msg = BAD_REQUEST;
+                } else if (request_status == 404)
+                {
+                    msg = GET_REQUEST;
+                } else if (request_status == 501)
+                {
+                    msg = ETC_REQUEST;
+                }
+                printf("sending %s\n", msg);
+                int len;
+                len = strlen(msg);
                 int bytes_sent = send(new_fd, msg, len, 0);
                 if (bytes_sent < 0) {
                     perror("send failed");
@@ -170,4 +227,61 @@ void *get_in_addr(struct sockaddr *sa)
     }
 
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
+}
+
+int validate_first_token(const char *token) {
+    char method[10], uri[100], http_version[20];
+
+    // Parse the token into three parts: Method, URI, and HTTPVersion
+    int num_parts = sscanf(token, "%s %s %s", method, uri, http_version);
+
+    // Ensure it has exactly three parts
+    if (num_parts != 3) {
+        return 400; // Invalid format BAD REQUEST
+    }
+
+    // Validate the HTTP Method
+    if (strcmp(method, "GET") != 0 && strcmp(method, "POST") != 0 &&
+        strcmp(method, "HEAD") != 0 && strcmp(method, "PUT") != 0 &&
+        strcmp(method, "DELETE") != 0 && strcmp(method, "OPTIONS") != 0 &&
+        strcmp(method, "PATCH") != 0) {
+        return 400; // Unsupported or invalid method BAD REQUEST
+    }
+
+    // Validate the HTTP Version
+    if (strcmp(http_version, "HTTP/1.0") != 0 && strcmp(http_version, "HTTP/1.1") != 0) {
+        return 400; // Invalid HTTP version BAD REQUEST
+    }
+
+    // All checks passed
+    if(strcmp(method, "GET") == 0) {
+        return 404;
+    }
+    return 501;
+}
+
+int validate_key_value_token(const char *token) {
+    // Find the colon in the token
+    const char *colon_pos = strchr(token, ':');
+    if (!colon_pos) {
+        return 0; // No colon found, invalid format
+    }
+
+    // Ensure there's at least one space after the colon
+    if (*(colon_pos + 1) != ' ') {
+        return 0; // No space after the colon, invalid format
+    }
+
+    // Ensure the key (before the colon) is non-empty
+    if (colon_pos == token) {
+        return 0; // Key is empty
+    }
+
+    // Ensure the value (after the colon and space) is non-empty
+    if (strlen(colon_pos + 2) == 0) {
+        return 0; // Value is empty
+    }
+
+    // All checks passed
+    return 1;
 }
