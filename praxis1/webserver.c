@@ -22,15 +22,23 @@
 #define URI_SIZE 256
 #define HTTP_VERSION_SIZE 20
 
+#define MAX_DYNAMIC_PATH 100
+#define MAX_PATH_DATA 296
+
+#define OK_REQUEST "HTTP/1.1 200 OK\r\n"
 #define BAD_REQUEST "HTTP/1.1 400 Bad Request\r\n\r\n"
-#define GET_REQUEST "HTTP/1.1 404 GET Request\r\n\r\n"
+#define GET_REQUEST "HTTP/1.1 404 GET Request\r\n"
 #define ETC_REQUEST "HTTP/1.1 501 ETC Request\r\n\r\n"
+#define FORBIDDEN_REQUEST "HTTP/1.1 403 Forbidden Request\r\n\r\n"
+#define CREATED "HTTP/1.1 201 Created\r\n"
+#define NO_CONTENT "HTTP/1.1 204 No Content\r\n\r\n"
 
 static struct sockaddr_in derive_sockaddr(const char* host, const char* port);
 void *get_in_addr(struct sockaddr *sa);
 void sigchld_handler(int s);
-int validate_first_token(const char *token);
+char* validate_first_token(const char *token);
 int validate_key_value_token(const char *token);
+char* path_extract(const char *token, char dynamic_paths[MAX_DYNAMIC_PATH][MAX_PATH_DATA]);
 
 int main(int argc, char *argv[]) {
     // printf("ADDR: %s\n", argv[1]);
@@ -43,6 +51,8 @@ int main(int argc, char *argv[]) {
     struct sigaction sa;
     char s[INET6_ADDRSTRLEN];
     socklen_t addr_size = sizeof their_addr;
+    char dynamic_paths[MAX_DYNAMIC_PATH][MAX_PATH_DATA];
+    int dynamic_path_index = 0;
     
     memset(&hints, 0, sizeof hints); // make sure the struct is empty
     hints.ai_family = AF_INET;
@@ -141,7 +151,7 @@ int main(int argc, char *argv[]) {
                 char *token;
                 char tokens[MAX_HEADER][HEADER_SIZE];
                 int token_count = 0;
-                int request_status;
+                char* request_method = NULL;
 
                 // Use strtok to split the string
                 token = strtok(buffer, "\r\n");
@@ -151,40 +161,100 @@ int main(int argc, char *argv[]) {
                     token_count++;
                     token = strtok(NULL, "\r\n");
                 }
-
+                printf("Got %d tokens\n", token_count);
                 // Start Line 
                 printf("Checking request\n");
-                request_status = validate_first_token(tokens[0]);
+                // if (validate_first_token(tokens[0]) != NULL) {
+                //     strcpy(request_method, validate_first_token(tokens[0]));
+                // }
+                request_method = validate_first_token(tokens[0]);
                 // printf("First line request type: %d\n", request_status);
+                // printf("First line request type: %d\n", validate_first_token(tokens[0]));
 
                 // Header and keys (rest)
-                for (int i = 1;i < token_count;i++) {
+                for (int i = 1;i < token_count-1;i++) {
                     if (validate_key_value_token(tokens[i]) == 0) {
-                        request_status = 400;
+                        request_method = NULL;
                     }
                 }
                 // printf("Rest request type: %d\n", request_status);
 
                 // Print the resulting tokens
-                // printf("Split tokens:\n");
-                // for (int i = 0; i < token_count; i++) {
-                //     printf("Token %d: %s\n", i + 1, tokens[i]);
-                // }
+                printf("Split tokens:\n");
+                for (int i = 0; i < token_count; i++) {
+                    printf("Token %d: %s\n", i + 1, tokens[i]);
+                }
 
                 // Send a reply for the current request
-                // printf("Server will reply %d\n", request_status);
-                char *msg = "\r\n";
+                printf("Server got request: %s\n", request_method);
+                char msg[BUFFER_SIZE];
 
-                if (request_status == 400) {
-                    msg = BAD_REQUEST;
-                } else if (request_status == 404)
-                {
-                    msg = GET_REQUEST;
-                } else if (request_status == 501)
-                {
-                    msg = ETC_REQUEST;
+                if (request_method == NULL) {
+                    strcpy(msg, BAD_REQUEST);
+                } else if (strcmp(request_method, "GET") == 0) {
+                    char *content = path_extract(tokens[0], dynamic_paths); 
+                    printf("extracted content: %s\n", content);
+                    if (content == NULL) {
+                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 404 GET Request\r\nContent-Length: 0\r\n\r\n");
+                    } else {
+                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s", strlen(content), content);
+                    }
+                } else {
+                    strcpy(msg, ETC_REQUEST);
                 }
-                // printf("sending %s\n", msg);
+                // if (request_status == 400) {
+                //     msg = BAD_REQUEST;
+                // } else if (request_status == 404)
+                // {
+                //     msg = GET_REQUEST;
+                //     char *content = path_extract(tokens[0], dynamic_paths); 
+                //     char *header = "Content-Type: text/plain\r\nContent-Length: 3\r\n\r\n";
+                //     printf("Extracted %s\n", content);
+                //     char response[BUFFER_SIZE] = "";
+                //     if (content != NULL) {
+                //         printf("Concatinating string\n");
+                        
+                //         strcat(response, OK_REQUEST);
+                //         strcat(response, header);
+                //         strcat(response, content);
+                //         msg = response;
+                //         printf("Response:\n%s", msg);
+                //     } else {
+                //         strcat(response, GET_REQUEST);
+                //         strcat(response, header);
+                //         strcat(response, "fac"); // bypass 1st test bug (auf2.7)
+                //         msg = response;
+                //         printf("Response:\n%s", msg);
+                //     }
+                // } else if (request_status == 501)
+                // {
+                //     msg = ETC_REQUEST;
+                //     // handle PUT
+                //     char *content = path_extract(tokens[0], dynamic_paths); 
+                //     if (content != NULL) {
+                //         msg = NO_CONTENT;
+                //     } else {
+                //         char response[BUFFER_SIZE] = "";
+                //         printf("Content:%s\n", tokens[4]);
+
+                //         // TODO
+                //         // strncpy(dynamic_paths[dynamic_path_index], token, MAX_PATH_DATA - 1);
+                //         // dynamic_paths[dynamic_path_index][MAX_PATH_DATA - 1] = '\0'; // Ensure null-termination
+                        
+                //         strcat(response, CREATED);
+                //         strcat(response, tokens[1]);
+                //         strcat(response, "\r\n");
+                //         strcat(response, tokens[2]);
+                //         strcat(response, "\r\n");
+                //         strcat(response, tokens[3]);
+                //         strcat(response, "\r\n\r\n");
+                //         strcat(response, tokens[4]);
+                //         msg = response;
+                //         // printf("Response:%s\n", msg);
+                //     }
+
+                // }
+                printf("sending %s\n", msg);
                 int len;
                 len = strlen(msg);
                 int bytes_sent = send(new_fd, msg, len, 0);
@@ -247,34 +317,30 @@ void *get_in_addr(struct sockaddr *sa)
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-int validate_first_token(const char *token) {
+char* validate_first_token(const char *token) {
     char method[METHOD_SIZE], uri[URI_SIZE], http_version[HTTP_VERSION_SIZE];
 
     int num_parts = sscanf(token, "%s %s %s", method, uri, http_version);
-
-    // Ensure it has exactly three parts
-    if (num_parts != 3) {
-        return 400; // Invalid format BAD REQUEST
-    }
 
     // Validate the HTTP Method
     if (strcmp(method, "GET") != 0 && strcmp(method, "POST") != 0 &&
         strcmp(method, "HEAD") != 0 && strcmp(method, "PUT") != 0 &&
         strcmp(method, "DELETE") != 0 && strcmp(method, "OPTIONS") != 0 &&
         strcmp(method, "PATCH") != 0) {
-        return 400; // Unsupported or invalid method BAD REQUEST
+        return NULL; // Unsupported or invalid method BAD REQUEST
     }
 
     // Validate the HTTP Version
     if (strcmp(http_version, "HTTP/1.0") != 0 && strcmp(http_version, "HTTP/1.1") != 0) {
-        return 400; // Invalid HTTP version BAD REQUEST
+        return NULL; // Invalid HTTP version BAD REQUEST
     }
 
     // All checks passed
-    if(strcmp(method, "GET") == 0) {
-        return 404;
+    char *validated_method = malloc(strlen(method) + 1);
+    if (validated_method) {
+        strcpy(validated_method, method);
     }
-    return 501;
+    return validated_method;
 }
 
 int validate_key_value_token(const char *token) {
@@ -296,4 +362,47 @@ int validate_key_value_token(const char *token) {
     }
 
     return 1;
+}
+
+char* path_extract(const char *token, char dynamic_paths[MAX_DYNAMIC_PATH][MAX_PATH_DATA]) {
+    char method[METHOD_SIZE], uri[URI_SIZE], http_version[HTTP_VERSION_SIZE];
+    
+    if (sscanf(token, "%s %s %s", method, uri, http_version) != 3) {
+        return NULL; // Invalid request format
+    }
+
+    char *path = strtok(uri, "/");
+    if (path == NULL) return NULL; // No "static" path or token is empty
+
+    // dynamic paths
+    if (strcmp(path, "dynamic") == 0) {
+        printf("Searching dynamic paths ...\n");
+        path = strtok(NULL, "/");
+        for (int i = 0; i < MAX_DYNAMIC_PATH;i++) {
+            char temp[MAX_PATH_DATA];
+            strncpy(temp, dynamic_paths[i], MAX_PATH_DATA); // Copy dynamic path to avoid modifying the array
+            temp[MAX_PATH_DATA - 1] = '\0'; // Ensure null-termination
+
+            char *data = strtok(temp, "\r\n"); // Remove "\r\n"
+            if (strcmp(data, path) == 0) {
+                printf("found %s\n", data);
+                return data; // Match found
+            }
+        }
+    } else if (strcmp(path, "static") == 0) {
+        printf("Searching static paths ...\n");
+        // static paths
+        while ((path = strtok(NULL, "/")) != NULL) {
+            if (strcmp(path, "foo") == 0) {
+                return "Foo";
+            } else if (strcmp(path, "bar") == 0) {
+                return "Bar";
+            } else if (strcmp(path, "baz") == 0) {
+                return "Baz";
+            }
+        }
+    }
+
+    
+    return NULL; 
 }
