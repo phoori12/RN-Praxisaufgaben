@@ -25,13 +25,10 @@
 #define MAX_DYNAMIC_PATH 100
 #define MAX_PATH_DATA 296
 
-#define OK_REQUEST "HTTP/1.1 200 OK\r\n"
 #define BAD_REQUEST "HTTP/1.1 400 Bad Request\r\n\r\n"
-#define GET_REQUEST "HTTP/1.1 404 GET Request\r\n"
 #define ETC_REQUEST "HTTP/1.1 501 ETC Request\r\n\r\n"
 #define FORBIDDEN_REQUEST "HTTP/1.1 403 Forbidden Request\r\n\r\n"
-#define CREATED "HTTP/1.1 201 Created\r\n"
-#define NO_CONTENT "HTTP/1.1 204 No Content\r\n\r\n"
+
 
 static struct sockaddr_in derive_sockaddr(const char* host, const char* port);
 void *get_in_addr(struct sockaddr *sa);
@@ -39,6 +36,7 @@ void sigchld_handler(int s);
 char* validate_first_token(const char *token);
 int validate_key_value_token(const char *token);
 char* path_extract(const char *token, char dynamic_paths[MAX_DYNAMIC_PATH][MAX_PATH_DATA]);
+char* db_query(const char *path, const char *content, char dynamic_paths[MAX_DYNAMIC_PATH][MAX_PATH_DATA], uint8_t mode);
 
 int main(int argc, char *argv[]) {
     // printf("ADDR: %s\n", argv[1]);
@@ -53,6 +51,8 @@ int main(int argc, char *argv[]) {
     socklen_t addr_size = sizeof their_addr;
     char dynamic_paths[MAX_DYNAMIC_PATH][MAX_PATH_DATA];
     int dynamic_path_index = 0;
+
+    memset(dynamic_paths, '\0', sizeof(dynamic_paths));
     
     memset(&hints, 0, sizeof hints); // make sure the struct is empty
     hints.ai_family = AF_INET;
@@ -124,7 +124,6 @@ int main(int argc, char *argv[]) {
             char buffer[BUFFER_SIZE];
             int bytes_received;
             
-
             while (1) {
                 // Receive data from the client
                 memset(buffer, 0, sizeof(buffer));
@@ -193,13 +192,41 @@ int main(int argc, char *argv[]) {
                     strcpy(msg, BAD_REQUEST);
                 } else if (strcmp(request_method, "GET") == 0) {
                     char *content = path_extract(tokens[0], dynamic_paths); 
-                    printf("extracted content: %s\n", content);
+                    // printf("extracted content: %s\n", content);
                     if (content == NULL) {
                         snprintf(msg, BUFFER_SIZE, "HTTP/1.1 404 GET Request\r\nContent-Length: 0\r\n\r\n");
                     } else {
                         snprintf(msg, BUFFER_SIZE, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s", strlen(content), content);
                     }
-                } else {
+                } else if (strcmp(request_method, "PUT") == 0) {                   
+                    char method[METHOD_SIZE], uri[URI_SIZE], http_version[HTTP_VERSION_SIZE];
+                    sscanf(tokens[0], "%s %s %s", method, uri, http_version);
+                    printf("extracted path: %s\n", uri);
+                    char *path = strtok(uri, "/");
+                    path = strtok(NULL, "/");
+                    char* query_status = db_query(path, tokens[token_count-1], dynamic_paths, 0);
+                    printf("Query status: %s\n", query_status);
+                    if (query_status == NULL) {
+                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+                    } else {
+                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 201 Created\r\nContent-Length: %zu\r\n\r\n%s", strlen(query_status), query_status);
+                    }
+
+
+                } else if (strcmp(request_method, "DELETE") == 0) {
+                    char method[METHOD_SIZE], uri[URI_SIZE], http_version[HTTP_VERSION_SIZE];
+                    sscanf(tokens[0], "%s %s %s", method, uri, http_version);
+                    printf("extracted path: %s\n", uri);
+                    char *path = strtok(uri, "/");
+                    path = strtok(NULL, "/");
+                    char* query_status = db_query(path, tokens[token_count-1], dynamic_paths, 1);
+                    printf("Query status: %s\n", query_status);
+                    if (query_status == NULL) {
+                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 404 GET Request\r\nContent-Length: 0\r\n\r\n");
+                    } else {
+                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+                    }
+                }else {
                     strcpy(msg, ETC_REQUEST);
                 }
                 // if (request_status == 400) {
@@ -254,7 +281,7 @@ int main(int argc, char *argv[]) {
                 //     }
 
                 // }
-                printf("sending %s\n", msg);
+                // printf("sending %s\n", msg);
                 int len;
                 len = strlen(msg);
                 int bytes_sent = send(new_fd, msg, len, 0);
@@ -262,7 +289,7 @@ int main(int argc, char *argv[]) {
                     perror("send failed");
                     break; 
                 }
-                printf("sent %s\n", msg);
+                // printf("sent %s\n", msg);
             }
 
             close(new_fd);
@@ -376,17 +403,26 @@ char* path_extract(const char *token, char dynamic_paths[MAX_DYNAMIC_PATH][MAX_P
 
     // dynamic paths
     if (strcmp(path, "dynamic") == 0) {
-        printf("Searching dynamic paths ...\n");
         path = strtok(NULL, "/");
+        printf("Searching dynamic paths for path %s ...\n", path);
+        
         for (int i = 0; i < MAX_DYNAMIC_PATH;i++) {
             char temp[MAX_PATH_DATA];
             strncpy(temp, dynamic_paths[i], MAX_PATH_DATA); // Copy dynamic path to avoid modifying the array
             temp[MAX_PATH_DATA - 1] = '\0'; // Ensure null-termination
-
-            char *data = strtok(temp, "\r\n"); // Remove "\r\n"
-            if (strcmp(data, path) == 0) {
-                printf("found %s\n", data);
-                return data; // Match found
+            // printf("DATA %s\n", temp);
+            char *data = strtok(temp, ": "); 
+            // printf("DATA %s\n", data);
+            if (data == NULL) {
+                continue;
+            } else if (strcmp(data, path) == 0) {
+                data = strtok(NULL, ": ");
+                printf("FOUND %s\n", data);
+                char* result = malloc(strlen(data) + 1);
+                if (result) {
+                    strcpy(result, data); // Copy the string to the allocated memory
+                }
+                return result;
             }
         }
     } else if (strcmp(path, "static") == 0) {
@@ -403,6 +439,68 @@ char* path_extract(const char *token, char dynamic_paths[MAX_DYNAMIC_PATH][MAX_P
         }
     }
 
-    
+    printf("Content not found\n");
     return NULL; 
 }
+
+// PUT and DELETE Implemention // Mode 0 = PUT, Mode 1 = DELETE
+char* db_query(const char *path, const char *content, char dynamic_paths[MAX_DYNAMIC_PATH][MAX_PATH_DATA], uint8_t mode) {
+    if (mode == 0) {
+        int index = 0;
+        printf("PUTTING %s: %s\n", path, content);
+        // search for duplicates
+        for (int i = 0; i < MAX_DYNAMIC_PATH;i++) {
+            char temp[MAX_PATH_DATA];
+            strncpy(temp, dynamic_paths[i], MAX_PATH_DATA); // Copy dynamic path to avoid modifying the array
+            temp[MAX_PATH_DATA - 1] = '\0'; // Ensure null-termination
+            
+            char *data = strtok(temp, ": "); 
+            // printf("DATA %s\n", data);
+            if (data == NULL) {
+                continue;
+            } else if (strcmp(data, path) == 0) {
+                printf("found %s\n", data);
+                return NULL; // Match found
+            }
+        }
+
+        printf("No duplicates found, performing PUT\n");
+        for (int i = 0;i < MAX_DYNAMIC_PATH;i++) {
+            if (dynamic_paths[i][0] == '\0') {
+                char data[MAX_PATH_DATA];
+                snprintf(data, MAX_PATH_DATA, "%s: %s", path, content);
+                // printf("PUTTING DATA: %s\n", data);
+                strncpy(dynamic_paths[i], data, MAX_PATH_DATA);
+                dynamic_paths[i][MAX_PATH_DATA - 1] = '\0';
+                
+                // Allocate memory for the return value
+                char* result = malloc(strlen(data) + 1);
+                if (result) {
+                    strcpy(result, data); // Copy the string to the allocated memory
+                }
+                return result;
+            }
+        }
+    } else {
+        int index = 0;
+        printf("DELETING %s: %s\n", path, content);
+        // search for duplicates
+        for (int i = 0; i < MAX_DYNAMIC_PATH;i++) {
+            char temp[MAX_PATH_DATA];
+            strncpy(temp, dynamic_paths[i], MAX_PATH_DATA); // Copy dynamic path to avoid modifying the array
+            temp[MAX_PATH_DATA - 1] = '\0'; // Ensure null-termination
+            
+            char *data = strtok(temp, ": "); 
+            // printf("DATA %s\n", data);
+            if (data == NULL) {
+                continue;
+            } else if (strcmp(data, path) == 0) {
+                printf("found %s\n", data);
+                dynamic_paths[i][0] = '\0';
+                return "DELETED"; // Return the cleared path
+            }
+        }
+    }
+
+    return NULL;
+}   
