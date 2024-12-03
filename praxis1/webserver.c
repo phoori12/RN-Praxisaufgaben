@@ -209,28 +209,34 @@ int main(int argc, char *argv[]) {
                     sscanf(tokens[0], "%s %s %s", method, uri, http_version);
                     // printf("extracted path: %s\n", uri);
                     char *path = strtok(uri, "/");
-                    path = strtok(NULL, "/");
-                    char* query_status = db_query(path, tokens[token_count-1], dynamic_paths, 0);
-                    // printf("Query status: %s\n", query_status);
-                    if (query_status == NULL) {
-                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+                    if (strcmp(path, "dynamic") != 0) {
+                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 403 Forbidden Request\r\nContent-Length: 0\r\n\r\n");
                     } else {
-                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 201 Created\r\nContent-Length: %zu\r\n\r\n%s", strlen(query_status), query_status);
+                        path = strtok(NULL, "/");
+                        char* query_status = db_query(path, tokens[token_count-1], dynamic_paths, 0);
+                        // printf("Query status: %s\n", query_status);
+                        if (query_status == NULL) {
+                            snprintf(msg, BUFFER_SIZE, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+                        } else {
+                            snprintf(msg, BUFFER_SIZE, "HTTP/1.1 201 Created\r\nContent-Length: %zu\r\n\r\n%s", strlen(query_status), query_status);
+                        }
                     }
-
-
                 } else if (strcmp(request_method, "DELETE") == 0) {
                     char method[METHOD_SIZE], uri[URI_SIZE], http_version[HTTP_VERSION_SIZE];
                     sscanf(tokens[0], "%s %s %s", method, uri, http_version);
                     // printf("extracted path: %s\n", uri);
                     char *path = strtok(uri, "/");
-                    path = strtok(NULL, "/");
-                    char* query_status = db_query(path, tokens[token_count-1], dynamic_paths, 1);
-                    // printf("Query status: %s\n", query_status);
-                    if (query_status == NULL) {
-                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 404 GET Request\r\nContent-Length: 0\r\n\r\n");
+                    if (strcmp(path, "dynamic") != 0) {
+                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 403 Forbidden Request\r\nContent-Length: 0\r\n\r\n");
                     } else {
-                        snprintf(msg, BUFFER_SIZE, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+                        path = strtok(NULL, "/");
+                        char* query_status = db_query(path, tokens[token_count-1], dynamic_paths, 1);
+                        // printf("Query status: %s\n", query_status);
+                        if (query_status == NULL) {
+                            snprintf(msg, BUFFER_SIZE, "HTTP/1.1 404 GET Request\r\nContent-Length: 0\r\n\r\n");
+                        } else {
+                            snprintf(msg, BUFFER_SIZE, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+                        }
                     }
                 }else {
                     strcpy(msg, ETC_REQUEST);
