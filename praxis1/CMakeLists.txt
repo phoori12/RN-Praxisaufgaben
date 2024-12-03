@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5) # Minimale CMake-Version 3.5
 
-project(praxis0_src C)
+project(praxis1_src C)
 
 set(CMAKE_C_STANDARD 11) # Wir verwenden C-Version C11
 
