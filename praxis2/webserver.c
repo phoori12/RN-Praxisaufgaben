@@ -287,6 +287,65 @@ static int setup_server_socket(struct sockaddr_in addr) {
     return sock;
 }
 
+static int setup_datagram_socket(const char *host, const char *port) {
+    struct addrinfo hints, *servinfo, *p;
+    const int enable = 1;
+    int rv, sock;
+
+    if (sock == -1) {
+        perror("UDP socket");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET; 
+    hints.ai_socktype = SOCK_DGRAM;
+
+    printf("UDP IP/PORT %s/%s\n", host, port);
+
+    if ((rv = getaddrinfo(host, port, &hints, &servinfo)) != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+        exit(EXIT_FAILURE);
+    }
+    struct sockaddr_in result = *((struct sockaddr_in *)servinfo->ai_addr);
+
+    // loop through all the results and make a socket
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+        if ((sock = socket(p->ai_family, p->ai_socktype,
+                p->ai_protocol)) == -1) {
+            perror("talker: socket");
+            continue;
+        }
+
+        break;
+    }
+
+    if (fcntl(sock, F_SETFL, O_NONBLOCK) == -1) {
+        perror("fcntl");
+        exit(EXIT_FAILURE);
+    }
+
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) ==
+        -1) {
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
+
+    if (p == NULL) {
+        fprintf(stderr, "talker: failed to create socket\n");
+        freeaddrinfo(servinfo);
+        exit(EXIT_FAILURE);
+    }
+
+    if (bind(sock, (struct sockaddr *)&result, sizeof(result)) == -1) {
+        perror("bind");
+        exit(EXIT_FAILURE);
+    }
+
+    freeaddrinfo(servinfo);
+    return sock;
+}
+
 /**
  *  The program expects 3; otherwise, it returns EXIT_FAILURE.
  *
@@ -298,11 +357,13 @@ int main(int argc, char **argv) {
     if (argc != 3) {
         return EXIT_FAILURE;
     }
-
     struct sockaddr_in addr = derive_sockaddr(argv[1], argv[2]);
 
     // Set up a server socket.
     int server_socket = setup_server_socket(addr);
+
+    // Set up a datagram socket
+    int datagram_socket = setup_datagram_socket(argv[1], argv[2]);
 
     // Create an array of pollfd structures to monitor sockets.
     struct pollfd sockets[2] = {
