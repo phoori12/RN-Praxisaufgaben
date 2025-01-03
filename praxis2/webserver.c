@@ -19,9 +19,134 @@
 #define MAX_RESOURCES 100
 
 struct tuple resources[MAX_RESOURCES] = {
-    {"/static/foo", "Foo", sizeof "Foo" - 1},
-    {"/static/bar", "Bar", sizeof "Bar" - 1},
-    {"/static/baz", "Baz", sizeof "Baz" - 1}};
+    {"44834", "Foo", sizeof "Foo" - 1}, // "/static/foo"
+    {"45104", "Bar", sizeof "Bar" - 1}, // "/static/bar"
+    {"43056", "Baz", sizeof "Baz" - 1}}; // "/static/baz"
+
+char *PRED_ID, *PRED_IP, *PRED_PORT, *SUCC_ID, *SUCC_IP, *SUCC_PORT, *ID;
+
+void send_reply(int conn, struct request *request);
+size_t process_packet(int conn, char *buffer, size_t n);
+static void connection_setup(struct connection_state *state, int sock);
+char *buffer_discard(char *buffer, size_t discard, size_t keep);
+bool handle_connection(struct connection_state *state);
+static struct sockaddr_in derive_sockaddr(const char *host, const char *port);
+static int setup_server_socket(struct sockaddr_in addr);
+static int setup_datagram_socket(const char *host, const char *port);
+
+/**
+ *  Call as:
+ *
+ *  ./build/webserver self.ip self.port
+ * 
+ *  Or:
+ * 
+ *  PRED_ID=49152 PRED_IP=127.0.0.1 PRED_PORT=2002 SUCC_ID=49152 SUCC_IP=127.0.0.1 SUCC_PORT=2002 ./build/webserver 127.0.0.1 2001 16384
+ *  
+ */
+int main(int argc, char **argv) {
+    // uint16_t h1 = pseudo_hash("/static/foo", sizeof "/static/foo" - 1);
+    // uint16_t h2 = pseudo_hash("/static/bar", sizeof "/static/bar" - 1);
+    // uint16_t h3 = pseudo_hash("/static/baz", sizeof "/static/baz" - 1);
+    // printf("%d , %d, %d \n", h1,h2,h3);
+    PRED_ID = getenv("PRED_ID");
+    PRED_IP = getenv("PRED_IP");
+    PRED_PORT = getenv("PRED_PORT");
+    SUCC_ID = getenv("SUCC_ID");
+    SUCC_IP = getenv("SUCC_IP");
+    SUCC_PORT = getenv("SUCC_PORT");
+    if (argc > 3) {
+        ID = argv[3];
+    } else {
+        ID = "0"; 
+    }
+
+    // printf("PRED_ID=%s, PRED_IP=%s, PRED_PORT=%s, SUCC_ID=%s, SUCC_IP=%s, SUCC_PORT=%s, ID=%s\n", 
+    // PRED_ID, PRED_IP, PRED_PORT, SUCC_ID, SUCC_IP, SUCC_PORT, ID);
+
+    struct sockaddr_in addr = derive_sockaddr(argv[1], argv[2]);
+
+    // Set up a server socket.
+    int server_socket = setup_server_socket(addr);
+
+    // Set up a datagram socket
+    int datagram_socket = setup_datagram_socket(argv[1], argv[2]);
+
+    // Create an array of pollfd structures to monitor sockets.
+    struct pollfd sockets[2] = {
+        {.fd = server_socket, .events = POLLIN},
+        {.fd = datagram_socket, .events = POLLIN},
+    };
+
+    struct connection_state state = {0};
+    while (true) {
+
+        // Use poll() to wait for events on the monitored sockets.
+        int ready = poll(sockets, sizeof(sockets) / sizeof(sockets[0]), -1);
+        if (ready == -1) {
+            perror("poll");
+            exit(EXIT_FAILURE);
+        }
+
+        // Process events on the monitored sockets.
+        for (size_t i = 0; i < sizeof(sockets) / sizeof(sockets[0]); i += 1) {
+            if (sockets[i].revents != POLLIN) {
+                // If there are no POLLIN events on the socket, continue to the
+                // next iteration.
+                continue;
+            }
+            int s = sockets[i].fd;
+
+            if (s == server_socket) {
+
+                // If the event is on the server_socket, accept a new connection
+                // from a client.
+                int connection = accept(server_socket, NULL, NULL);
+                if (connection == -1 && errno != EAGAIN &&
+                    errno != EWOULDBLOCK) {
+                    close(server_socket);
+                    perror("accept");
+                    exit(EXIT_FAILURE);
+                } else {
+                    connection_setup(&state, connection);
+
+                    // limit to one connection at a time
+                    sockets[0].events = 0;
+                    sockets[1].fd = connection;
+                    sockets[1].events = POLLIN;
+                }
+            } else if (s == datagram_socket) {
+                printf("hit\n");
+                char buffer[1024];
+                struct sockaddr_in sender_addr;
+                socklen_t addr_len = sizeof(sender_addr);
+
+                ssize_t num_bytes = recvfrom(s, buffer, sizeof(buffer) - 1, 0,
+                                                (struct sockaddr *)&sender_addr, &addr_len);
+                if (num_bytes == -1) {
+                    perror("recvfrom");
+                    continue;
+                }
+                buffer[num_bytes] = '\0'; // Null-terminate the received data
+                printf("Received UDP message: %s\n", buffer);
+
+            } else  {
+                assert(s == state.sock);
+
+                // Call the 'handle_connection' function to process the incoming
+                // data on the socket.
+                bool cont = handle_connection(&state);
+                if (!cont) { // get ready for a new connection
+                    sockets[0].events = POLLIN;
+                    sockets[1].fd = -1;
+                    sockets[1].events = 0;
+                }
+            }
+        }
+    }
+
+    return EXIT_SUCCESS;
+}
 
 /**
  * Sends an HTTP reply to the client based on the received request.
@@ -40,11 +165,17 @@ void send_reply(int conn, struct request *request) {
     fprintf(stderr, "Handling %s request for %s (%lu byte payload)\n",
             request->method, request->uri, request->payload_length);
 
+    uint16_t uri_hash = pseudo_hash((const unsigned char *)request->uri, strlen(request->uri));
+    
+    char uri_hash_string[6];  // Buffer to hold the string representation of the number (5 digits + null terminator)
+    snprintf(uri_hash_string, sizeof(uri_hash_string), "%u", uri_hash);
+    // printf("%s\n", uri_hash_string);
+
     if (strcmp(request->method, "GET") == 0) {
         // Find the resource with the given URI in the 'resources' array.
         size_t resource_length;
         const char *resource =
-            get(request->uri, resources, MAX_RESOURCES, &resource_length);
+            get(uri_hash_string, resources, MAX_RESOURCES, &resource_length);
 
         if (resource) {
             size_t payload_offset =
@@ -53,13 +184,17 @@ void send_reply(int conn, struct request *request) {
             memcpy(reply + payload_offset, resource, resource_length);
             offset = payload_offset + resource_length;
         } else {
-            reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            if (uri_hash > (int)ID && uri_hash < (int)SUCC_ID) { // check if not responsible
+                snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation:%s:%s%s\r\nContent-Length: 0\r\n\r\n", SUCC_IP, SUCC_PORT, request->uri);
+            } else {
+                reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            }
             offset = strlen(reply);
         }
     } else if (strcmp(request->method, "PUT") == 0) {
         // Try to set the requested resource with the given payload in the
         // 'resources' array.
-        if (set(request->uri, request->payload, request->payload_length,
+        if (set(uri_hash_string, request->payload, request->payload_length,
                 resources, MAX_RESOURCES)) {
             reply = "HTTP/1.1 204 No Content\r\n\r\n";
         } else {
@@ -68,7 +203,7 @@ void send_reply(int conn, struct request *request) {
         offset = strlen(reply);
     } else if (strcmp(request->method, "DELETE") == 0) {
         // Try to delete the requested resource from the 'resources' array
-        if (delete (request->uri, resources, MAX_RESOURCES)) {
+        if (delete (uri_hash_string, resources, MAX_RESOURCES)) {
             reply = "HTTP/1.1 204 No Content\r\n\r\n";
         } else {
             reply = "HTTP/1.1 404 Not Found\r\n\r\n";
@@ -301,15 +436,13 @@ static int setup_datagram_socket(const char *host, const char *port) {
     hints.ai_family = AF_INET; 
     hints.ai_socktype = SOCK_DGRAM;
 
-    printf("UDP IP/PORT %s/%s\n", host, port);
-
     if ((rv = getaddrinfo(host, port, &hints, &servinfo)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         exit(EXIT_FAILURE);
     }
+    
     struct sockaddr_in result = *((struct sockaddr_in *)servinfo->ai_addr);
 
-    // loop through all the results and make a socket
     for(p = servinfo; p != NULL; p = p->ai_next) {
         if ((sock = socket(p->ai_family, p->ai_socktype,
                 p->ai_protocol)) == -1) {
@@ -344,83 +477,4 @@ static int setup_datagram_socket(const char *host, const char *port) {
 
     freeaddrinfo(servinfo);
     return sock;
-}
-
-/**
- *  The program expects 3; otherwise, it returns EXIT_FAILURE.
- *
- *  Call as:
- *
- *  ./build/webserver self.ip self.port
- */
-int main(int argc, char **argv) {
-    if (argc != 3) {
-        return EXIT_FAILURE;
-    }
-    struct sockaddr_in addr = derive_sockaddr(argv[1], argv[2]);
-
-    // Set up a server socket.
-    int server_socket = setup_server_socket(addr);
-
-    // Set up a datagram socket
-    int datagram_socket = setup_datagram_socket(argv[1], argv[2]);
-
-    // Create an array of pollfd structures to monitor sockets.
-    struct pollfd sockets[2] = {
-        {.fd = server_socket, .events = POLLIN},
-    };
-
-    struct connection_state state = {0};
-    while (true) {
-
-        // Use poll() to wait for events on the monitored sockets.
-        int ready = poll(sockets, sizeof(sockets) / sizeof(sockets[0]), -1);
-        if (ready == -1) {
-            perror("poll");
-            exit(EXIT_FAILURE);
-        }
-
-        // Process events on the monitored sockets.
-        for (size_t i = 0; i < sizeof(sockets) / sizeof(sockets[0]); i += 1) {
-            if (sockets[i].revents != POLLIN) {
-                // If there are no POLLIN events on the socket, continue to the
-                // next iteration.
-                continue;
-            }
-            int s = sockets[i].fd;
-
-            if (s == server_socket) {
-
-                // If the event is on the server_socket, accept a new connection
-                // from a client.
-                int connection = accept(server_socket, NULL, NULL);
-                if (connection == -1 && errno != EAGAIN &&
-                    errno != EWOULDBLOCK) {
-                    close(server_socket);
-                    perror("accept");
-                    exit(EXIT_FAILURE);
-                } else {
-                    connection_setup(&state, connection);
-
-                    // limit to one connection at a time
-                    sockets[0].events = 0;
-                    sockets[1].fd = connection;
-                    sockets[1].events = POLLIN;
-                }
-            } else {
-                assert(s == state.sock);
-
-                // Call the 'handle_connection' function to process the incoming
-                // data on the socket.
-                bool cont = handle_connection(&state);
-                if (!cont) { // get ready for a new connection
-                    sockets[0].events = POLLIN;
-                    sockets[1].fd = -1;
-                    sockets[1].events = 0;
-                }
-            }
-        }
-    }
-
-    return EXIT_SUCCESS;
 }
