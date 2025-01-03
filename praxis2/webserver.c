@@ -280,13 +280,9 @@ void send_reply(int conn, struct request *request, int udp_socket) {
             memcpy(reply + payload_offset, resource, resource_length);
             offset = payload_offset + resource_length;
         } else {
-            printf("uri_hash: %d\n", uri_hash);
-            printf("ID: %s\n", ID);
-            printf("PRED_ID: %s\n", PRED_ID);
-            printf("SUCC ID: %s\n", SUCC_ID);
-            if (uri_hash < atoi(ID) && uri_hash > atoi(PRED_ID)) { // check if not responsible
+            if (strcmp(PRED_ID, SUCC_ID) == 0 && uri_hash != atoi(ID)) { // nothing to look for
                 // snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation:%s:%s%s\r\nContent-Length: 0\r\n\r\n", SUCC_IP, SUCC_PORT, request->uri);
-                // reply = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n";
+                reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
             } else {
                 // reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
                 reply = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n";
