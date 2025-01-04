@@ -17,6 +17,7 @@
 #include "util.h"
 
 #define MAX_RESOURCES 100
+#define MAX_REQUESTS 10
 
 struct tuple resources[MAX_RESOURCES] = {
     {"44834", "Foo", sizeof "Foo" - 1}, // "/static/foo"
@@ -31,6 +32,8 @@ struct message {
     uint16_t node_port;     // 2 bytes
 } __attribute__((packed));
 
+struct tuple requests[MAX_REQUESTS];
+
 char *PRED_ID, *PRED_IP, *PRED_PORT, *SUCC_ID, *SUCC_IP, *SUCC_PORT, *ID, *IP, *PORT;
 
 void send_reply(int conn, struct request *request, int udp_socket);
@@ -41,9 +44,7 @@ bool handle_connection(struct connection_state *state, int udp_socket);
 static struct sockaddr_in derive_sockaddr(const char *host, const char *port);
 static int setup_server_socket(struct sockaddr_in addr);
 static int setup_datagram_socket(const char *host, const char *port);
-int is_successor_responsible(uint16_t hash, uint16_t current_node_id, uint16_t successor_id);
-int is_current_node_responsible(uint16_t hash, uint16_t current_node_id, uint16_t successor_id);
-
+void send_udp_message(int socket ,uint8_t message_type, uint16_t hash_id, uint16_t node_id, char* ip_address, uint16_t node_port, struct in_addr send_ip, uint16_t send_port);
 /**
  *  Call as:
  *
@@ -163,66 +164,25 @@ int main(int argc, char **argv) {
 
                 if (ntohs(received_msg->hash_id) > atoi(ID) && ntohs(received_msg->hash_id) < atoi(SUCC_ID)) { // Successor responsible
                     printf("res\n");
-                    struct message udp_message;
-                    udp_message.message_type = 1;
-                    udp_message.hash_id = htons(atoi(ID)); // should be PRED_ID
-                    udp_message.node_id = htons(atoi(SUCC_ID));
-                    inet_pton(AF_INET, IP, &udp_message.ip_address); // Convert IP address to binary format
-                    udp_message.node_port = htons(atoi(SUCC_PORT));      // Convert port to network byte order
-
-                    // Define the UDP address
-                    struct sockaddr_in udp_addr;
-                    memset(&udp_addr, 0, sizeof(udp_addr));
-                    udp_addr.sin_family = AF_INET;
-                    udp_addr.sin_port = received_msg->node_port;          // UDP port (already in network byte order)
-                    udp_addr.sin_addr = received_msg->ip_address;
-
-                    // Send the message over UDP
-                    if (sendto(datagram_socket, &udp_message, sizeof(udp_message), 0,
-                            (struct sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
-                        perror("Failed to send UDP message");
-                    } 
+                    send_udp_message(datagram_socket , 1, htons(atoi(ID)), htons(atoi(SUCC_ID)), IP, htons(atoi(SUCC_PORT)), 
+                    received_msg->ip_address, received_msg->node_port);
                 } else if (ntohs(received_msg->hash_id) < atoi(ID) && ntohs(received_msg->hash_id) > atoi(SUCC_ID)) { // Current responsible
-                    struct message udp_message;
-                    udp_message.message_type = 1;
-                    udp_message.hash_id = htons(atoi(PRED_ID)); // should be PRED_ID
-                    udp_message.node_id = htons(atoi(ID));
-                    inet_pton(AF_INET, IP, &udp_message.ip_address); // Convert IP address to binary format
-                    udp_message.node_port = htons(atoi(PORT));      // Convert port to network byte order
-
-                    // Define the UDP address
-                    struct sockaddr_in udp_addr;
-                    memset(&udp_addr, 0, sizeof(udp_addr));
-                    udp_addr.sin_family = AF_INET;
-                    udp_addr.sin_port = received_msg->node_port;          // UDP port (already in network byte order)
-                    udp_addr.sin_addr = received_msg->ip_address;
-
-                    // Send the message over UDP
-                    if (sendto(datagram_socket, &udp_message, sizeof(udp_message), 0,
-                            (struct sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
-                        perror("Failed to send UDP message");
-                    } 
+                    send_udp_message(datagram_socket , 1, htons(atoi(PRED_ID)), htons(atoi(ID)), IP, htons(atoi(PORT)), 
+                    received_msg->ip_address, received_msg->node_port);
                 } else {
-
-                    struct message udp_message;
-                    udp_message.message_type = received_msg->message_type;
-                    udp_message.hash_id = received_msg->hash_id; // should be PRED_ID
-                    udp_message.node_id = received_msg->node_id;
-                    udp_message.ip_address = received_msg->ip_address; // Convert IP address to binary format
-                    udp_message.node_port = received_msg->node_port;      // Convert port to network byte order
+                    
+                    char ip_str[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str));
 
                     // Define the UDP address
                     struct sockaddr_in udp_addr;
                     memset(&udp_addr, 0, sizeof(udp_addr));
                     udp_addr.sin_family = AF_INET;
-                    udp_addr.sin_port = htons(atoi(SUCC_PORT));          // UDP port (already in network byte order)
+                    udp_addr.sin_port = htons(atoi(SUCC_PORT));         
                     inet_pton(AF_INET, SUCC_IP, &udp_addr.sin_addr); 
 
-                    // Send the message over UDP
-                    if (sendto(datagram_socket, &udp_message, sizeof(udp_message), 0,
-                            (struct sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
-                        perror("Failed to send UDP message");
-                    } 
+                    send_udp_message(datagram_socket , received_msg->message_type, received_msg->hash_id, received_msg->node_id, 
+                    ip_str, received_msg->node_port, udp_addr.sin_addr, udp_addr.sin_port);     
                 }
 
             } else  {
@@ -258,8 +218,8 @@ void send_reply(int conn, struct request *request, int udp_socket) {
     char *reply = buffer;
     size_t offset = 0;
 
-    fprintf(stderr, "Handling %s request for %s (%lu byte payload)\n",
-            request->method, request->uri, request->payload_length);
+    // fprintf(stderr, "Handling %s request for %s (%lu byte payload)\n",
+            // request->method, request->uri, request->payload_length);
 
     uint16_t uri_hash = pseudo_hash((const unsigned char *)request->uri, strlen(request->uri));
     
@@ -611,16 +571,25 @@ static int setup_datagram_socket(const char *host, const char *port) {
     return sock;
 }
 
-int is_successor_responsible(uint16_t hash, uint16_t current_node_id, uint16_t successor_id) {
-    if (current_node_id < successor_id) {
-        // Normal case, no wrap-around
-        return (hash > current_node_id && hash <= successor_id);
-    } else {
-        // Wrap-around case
-        return (hash > current_node_id || hash <= successor_id);
-    }
-}
+void send_udp_message(int socket ,uint8_t message_type, uint16_t hash_id, uint16_t node_id, char* ip_address, uint16_t node_port, struct in_addr send_ip, uint16_t send_port) {
+    struct message udp_message;
+    udp_message.message_type = message_type;
+    udp_message.hash_id = hash_id; 
+    udp_message.node_id = node_id;
+    inet_pton(AF_INET, ip_address, &udp_message.ip_address); // Convert IP address to binary format
+    udp_message.node_port = node_port;      // Convert port to network byte order
 
-int is_current_node_responsible(uint16_t hash, uint16_t current_node_id, uint16_t successor_id) {
-    return !is_successor_responsible(hash, current_node_id, successor_id);
+    // Define the UDP address
+    struct sockaddr_in udp_addr;
+    memset(&udp_addr, 0, sizeof(udp_addr));
+    udp_addr.sin_family = AF_INET;
+    udp_addr.sin_port = send_port;          // UDP port (already in network byte order)
+    udp_addr.sin_addr = send_ip;
+    // inet_pton(AF_INET, send_ip, &udp_addr.sin_addr); 
+
+    // Send the message over UDP
+    if (sendto(socket, &udp_message, sizeof(udp_message), 0,
+            (struct sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
+        perror("Failed to send UDP message");
+    } 
 }
