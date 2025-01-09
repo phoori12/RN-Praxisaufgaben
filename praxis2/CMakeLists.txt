@@ -4,7 +4,7 @@ set(CMAKE_C_STANDARD 11)
 
 add_executable(webserver webserver.c http.c util.c data.c)
 target_compile_options(webserver PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(webserver PRIVATE -lm)
+target_link_libraries(webserver PRIVATE -lm -pthread)
 
 # Packaging
 set(CPACK_SOURCE_GENERATOR "TGZ")

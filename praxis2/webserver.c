@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
@@ -20,9 +21,9 @@
 #define MAX_REQUESTS 10
 
 struct tuple resources[MAX_RESOURCES] = {
-    {"44834", "Foo", sizeof "Foo" - 1}, // "/static/foo"
-    {"45104", "Bar", sizeof "Bar" - 1}, // "/static/bar"
-    {"43056", "Baz", sizeof "Baz" - 1}}; // "/static/baz"
+    {"/static/foo", "Foo", sizeof "Foo" - 1}, // "/static/foo" 44834
+    {"/static/bar", "Bar", sizeof "Bar" - 1}, // "/static/bar" 45104
+    {"/static/baz", "Baz", sizeof "Baz" - 1}}; // "/static/baz" 43056
 
 struct message {
     uint8_t message_type;        // 1 byte
@@ -34,8 +35,13 @@ struct message {
 
 struct lookup_request {
     uint16_t hash_id;     // Unique identifier for the request
-    char* node_ip;     // Node IP (IPv4 as string, e.g., "127.0.0.1")
+    char node_ip[INET_ADDRSTRLEN];     // Node IP (IPv4 as string, e.g., "127.0.0.1")
     uint16_t node_port;   // Node port
+};
+
+struct tcp_thread_args {
+    int server_socket;      // TCP server socket
+    int datagram_socket;    // UDP socket
 };
 
 int request_count = 0; // Tracks the number of stored requests
@@ -55,7 +61,175 @@ void send_udp_message(int socket ,uint8_t message_type, uint16_t hash_id, uint16
 void add_request(struct lookup_request new_request);
 int has_request(uint16_t hash_id);
 void find_and_write(uint16_t hash_id, char* ip, char* port);
-int fetch_req_index(uint16_t hash_id);
+int fetch_req_index(uint16_t hash_id, uint16_t current_id);
+int normal_fetch_index(uint16_t hash_id);
+void *tcp_thread_function(void *arg);
+void *udp_thread_function(void *arg);
+
+void print_lookup_requests(struct lookup_request* requests, size_t count) {
+    if (requests == NULL || count == 0) {
+        printf("No lookup requests to print.\n");
+        return;
+    }
+
+    printf("Lookup Requests:\n");
+    for (size_t i = 0; i < count; i++) {
+        printf("Request %zu:\n", i + 1);
+        printf("  Hash ID: %u\n", requests[i].hash_id);
+        printf("  Node IP: %s\n", requests[i].node_ip ? requests[i].node_ip : "N/A");
+        printf("  Node Port: %u\n", requests[i].node_port);
+    }
+}
+
+void *tcp_thread_function(void *args) {
+    struct tcp_thread_args *thread_args = (struct tcp_thread_args *)args;
+    int server_socket = thread_args->server_socket;
+    int datagram_socket = thread_args->datagram_socket;
+    // Create an array of pollfd structures to monitor sockets.
+    struct pollfd sockets[2] = {
+        {.fd = server_socket, .events = POLLIN},
+    };
+
+    struct connection_state state = {0};
+
+    while (true) {
+        int ready = poll(sockets, sizeof(sockets) / sizeof(sockets[0]), -1);
+        if (ready == -1) {
+            perror("poll");
+            exit(EXIT_FAILURE);
+        }
+
+        // Process events on the monitored sockets.
+        for (size_t i = 0; i < sizeof(sockets) / sizeof(sockets[0]); i += 1) {
+            if (sockets[i].revents != POLLIN) {
+                // If there are no POLLIN events on the socket, continue to the
+                // next iteration.
+                continue;
+            }
+            int s = sockets[i].fd;
+
+            if (s == server_socket) {
+
+                // If the event is on the server_socket, accept a new connection
+                // from a client.
+                int connection = accept(server_socket, NULL, NULL);
+                if (connection == -1 && errno != EAGAIN &&
+                    errno != EWOULDBLOCK) {
+                    close(server_socket);
+                    perror("accept");
+                    exit(EXIT_FAILURE);
+                } else {
+                    connection_setup(&state, connection);
+
+                    // limit to one connection at a time
+                    sockets[0].events = 0;
+                    sockets[1].fd = connection;
+                    sockets[1].events = POLLIN;
+                }
+            } else {
+                assert(s == state.sock);
+
+                // Call the 'handle_connection' function to process the incoming
+                // data on the socket.
+                bool cont = handle_connection(&state, datagram_socket);
+                if (!cont) { // get ready for a new connection
+                    sockets[0].events = POLLIN;
+                    sockets[1].fd = -1;
+                    sockets[1].events = 0;
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+void *udp_thread_function(void *arg) {
+    int datagram_socket = *(int *)arg;
+    char buffer[1024];
+    struct sockaddr_in sender_addr;
+    socklen_t addr_len = sizeof(sender_addr);
+
+    while (true) {
+        // Handle message forwarding and reply logic
+        char buffer[1024];
+        struct sockaddr_in sender_addr;
+        socklen_t addr_len = sizeof(sender_addr);
+
+        ssize_t num_bytes = recvfrom(datagram_socket, buffer, sizeof(buffer), 0,
+                                    (struct sockaddr *)&sender_addr, &addr_len);
+        if (num_bytes == -1) {
+            // perror("recvfrom");
+            continue;
+        }
+
+        if (num_bytes < sizeof(struct message)) {
+            fprintf(stderr, "Received message is too short to unpack\n");
+            continue;
+        }
+
+        // Cast the buffer to a pointer to your struct message
+        struct message *received_msg = (struct message *)buffer;
+
+        // Access the fields of the unpacked struct
+        printf("Received UDP message:\n");
+        printf("  Message Type: %u\n", received_msg->message_type);
+        // printf("  PRED ID: %u\n", atoi(PRED_ID)); 
+        printf("  CURR ID: %u\n", atoi(ID)); 
+        printf("  Hash ID: %u\n", ntohs(received_msg->hash_id));  // Convert from network to host byte order
+        // printf("  SUCC ID: %u\n", atoi((SUCC_ID))); 
+        printf("  Node ID: %u\n", ntohs(received_msg->node_id));  // Convert from network to host byte order
+        char ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str)); // Convert IP to string
+        printf("  IP Address: %s\n", ip_str);
+        printf("  Node Port: %u\n", ntohs(received_msg->node_port)); 
+        // printf("  SUCC IP: %s\n", SUCC_IP);
+        // printf("  SUCC Port: %s\n", SUCC_PORT); 
+
+        if (received_msg->message_type == 0) {
+            if (ntohs(received_msg->hash_id) > atoi(ID) && ntohs(received_msg->hash_id) < atoi(SUCC_ID)) { // Successor responsible
+                printf("res\n");
+                send_udp_message(datagram_socket , 1, htons(atoi(ID)), htons(atoi(SUCC_ID)), SUCC_IP, htons(atoi(SUCC_PORT)), 
+                received_msg->ip_address, received_msg->node_port);
+            } 
+            // else if (ntohs(received_msg->hash_id) < atoi(ID) && ntohs(received_msg->hash_id) >= atoi(PRED_ID)) { // Current responsible
+            //     // send_udp_message(datagram_socket , 1, htons(atoi(PRED_ID)), htons(atoi(ID)), IP, htons(atoi(PORT)), 
+            //     // received_msg->ip_address, received_msg->node_port);
+            //     printf("We are responsible\n");
+            //     continue;
+            // } 
+            else { // forward lookup
+                char ip_succ[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str));
+
+                struct sockaddr_in udp_addr;
+                memset(&udp_addr, 0, sizeof(udp_addr));
+                udp_addr.sin_family = AF_INET;
+                udp_addr.sin_port = htons(atoi(SUCC_PORT));         
+                inet_pton(AF_INET, SUCC_IP, &udp_addr.sin_addr); 
+
+                char ip_str[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str));
+                send_udp_message(datagram_socket , received_msg->message_type, received_msg->hash_id, received_msg->node_id, 
+                ip_str, received_msg->node_port, udp_addr.sin_addr, udp_addr.sin_port);    
+
+            }
+        } else {
+            printf("got reply\n");
+            // find lookup in requests[] and write
+            int index = fetch_req_index(received_msg->hash_id, ntohs(received_msg->node_id));
+            if (index >= 0) {
+                printf("request found overwriting...\n");
+                inet_ntop(AF_INET, &received_msg->ip_address, requests[index].node_ip, sizeof(requests[index].node_ip));
+                requests[index].node_port = ntohs(received_msg->node_port);
+            } else {
+                printf("request not found\n");
+                perror("hash not found");
+            }
+        }
+                
+    }
+    return NULL;
+}
 
 /**
  *  Call as:
@@ -86,10 +260,8 @@ int main(int argc, char **argv) {
     IP = argv[1];
     PORT = argv[2];
 
-    
     memset(requests, 0, sizeof(requests));
     
-
     // printf("PRED_ID=%s, PRED_IP=%s, PRED_PORT=%s, SUCC_ID=%s, SUCC_IP=%s, SUCC_PORT=%s, ID=%s\n", 
     // PRED_ID, PRED_IP, PRED_PORT, SUCC_ID, SUCC_IP, SUCC_PORT, ID);
 
@@ -101,162 +273,27 @@ int main(int argc, char **argv) {
     // Set up a datagram socket
     int datagram_socket = setup_datagram_socket(argv[1], argv[2]);
 
-    // Create an array of pollfd structures to monitor sockets.
-    struct pollfd sockets[2] = {
-        {.fd = server_socket, .events = POLLIN},
-        {.fd = datagram_socket, .events = POLLIN},
-    };
 
-    struct connection_state state = {0};
-    while (true) {
-
-        // Use poll() to wait for events on the monitored sockets.
-        int ready = poll(sockets, sizeof(sockets) / sizeof(sockets[0]), -1);
-        if (ready == -1) {
-            perror("poll");
-            exit(EXIT_FAILURE);
-        }
-        printf("UDP socket descriptor: %d\n", datagram_socket);
-        // Process events on the monitored sockets.
-        for (size_t i = 0; i < sizeof(sockets) / sizeof(sockets[0]); i += 1) {
-            if (sockets[i].revents != POLLIN) {
-                // If there are no POLLIN events on the socket, continue to the
-                // next iteration.
-                continue;
-            }
-            int s = sockets[i].fd;
-
-            if (s == server_socket) {
-                printf("doing tcp\n");
-                // If the event is on the server_socket, accept a new connection
-                // from a client.
-                int connection = accept(server_socket, NULL, NULL);
-                if (connection == -1 && errno != EAGAIN &&
-                    errno != EWOULDBLOCK) {
-                    close(server_socket);
-                    perror("accept");
-                    exit(EXIT_FAILURE);
-                } else {
-                    connection_setup(&state, connection);
-
-                    // limit to one connection at a time
-                    sockets[0].events = 0;
-                    sockets[1].fd = connection;
-                    sockets[1].events = POLLIN;
-                }
-                printf("end tcp\n");
-            } else if (s == datagram_socket) {
-                char buffer[1024];
-                struct sockaddr_in sender_addr;
-                socklen_t addr_len = sizeof(sender_addr);
-
-                ssize_t num_bytes = recvfrom(s, buffer, sizeof(buffer), 0,
-                                            (struct sockaddr *)&sender_addr, &addr_len);
-                if (num_bytes == -1) {
-                    perror("recvfrom");
-                    continue;
-                }
-
-                if (num_bytes < sizeof(struct message)) {
-                    fprintf(stderr, "Received message is too short to unpack\n");
-                    continue;
-                }
-
-                // Cast the buffer to a pointer to your struct message
-                struct message *received_msg = (struct message *)buffer;
-
-                // Access the fields of the unpacked struct
-                printf("Received UDP message:\n");
-                printf("  Message Type: %u\n", received_msg->message_type);
-                printf("  PRED ID: %u\n", atoi(PRED_ID)); 
-                printf("  CURR ID: %u\n", atoi(ID)); 
-                printf("  Hash ID: %u\n", ntohs(received_msg->hash_id));  // Convert from network to host byte order
-                printf("  SUCC ID: %u\n", atoi((SUCC_ID))); 
-                printf("  Node ID: %u\n", ntohs(received_msg->node_id));  // Convert from network to host byte order
-                char ip_str[INET_ADDRSTRLEN];
-                inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str)); // Convert IP to string
-                printf("  IP Address: %s\n", ip_str);
-                printf("  Node Port: %u\n", ntohs(received_msg->node_port)); 
-                printf("  SUCC IP: %s\n", SUCC_IP);
-                printf("  SUCC Port: %s\n", SUCC_PORT); 
-
-                if (received_msg->message_type == 0) {
-                    if (ntohs(received_msg->hash_id) > atoi(ID) && ntohs(received_msg->hash_id) < atoi(SUCC_ID)) { // Successor responsible
-                        printf("res\n");
-                        send_udp_message(datagram_socket , 1, htons(atoi(ID)), htons(atoi(SUCC_ID)), SUCC_IP, htons(atoi(SUCC_PORT)), 
-                        received_msg->ip_address, received_msg->node_port);
-                    } else if (ntohs(received_msg->hash_id) < atoi(ID) && ntohs(received_msg->hash_id) > atoi(SUCC_ID)) { // Current responsible
-                        send_udp_message(datagram_socket , 1, htons(atoi(PRED_ID)), htons(atoi(ID)), IP, htons(atoi(PORT)), 
-                        received_msg->ip_address, received_msg->node_port);
-                    } else { // forward lookup
-                        char ip_succ[INET_ADDRSTRLEN];
-                        inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str));
-
-                        
-                        if (strcmp(ip_succ, SUCC_IP) == 0 || atoi(SUCC_PORT) == ntohs(received_msg->node_port)) {
-                            printf("end of line sending reply to originator\n");
-                            struct sockaddr_in udp_addr;
-                            memset(&udp_addr, 0, sizeof(udp_addr));
-                            udp_addr.sin_family = AF_INET;
-                            udp_addr.sin_port = htons(atoi(SUCC_PORT));         
-                            inet_pton(AF_INET, SUCC_IP, &udp_addr.sin_addr); 
-
-                            char ip_str[INET_ADDRSTRLEN];
-                            inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str));
-                            send_udp_message(datagram_socket , 1, received_msg->hash_id, received_msg->node_id, 
-                            ip_str, received_msg->node_port, udp_addr.sin_addr, udp_addr.sin_port);    
-                        } else {
-                            printf("forward kek\n");
-                            struct sockaddr_in udp_addr;
-                            memset(&udp_addr, 0, sizeof(udp_addr));
-                            udp_addr.sin_family = AF_INET;
-                            udp_addr.sin_port = htons(atoi(SUCC_PORT));         
-                            inet_pton(AF_INET, SUCC_IP, &udp_addr.sin_addr); 
-
-                            char ip_str[INET_ADDRSTRLEN];
-                            inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str));
-                            send_udp_message(datagram_socket , received_msg->message_type, received_msg->hash_id, received_msg->node_id, 
-                            ip_str, received_msg->node_port, udp_addr.sin_addr, udp_addr.sin_port);    
-                        }
-                         
-                    }
-                } else {
-                    printf("got reply\n");
-                    // find lookup in requests[] and write
-                    int index = fetch_req_index(received_msg->hash_id);
-                    if (index >= 0) {
-                        printf("request found overwriting...\n");
-                        inet_ntop(AF_INET, &received_msg->ip_address, requests[index].node_ip, sizeof(requests[index].node_ip));
-                        requests[index].node_port = received_msg->node_port;
-                    } else {
-                        printf("request not found\n");
-                        perror("hash not found");
-                    }
-                }
-                
-
-            } else  {
-                assert(s == state.sock);
-
-                // Call the 'handle_connection' function to process the incoming
-                // data on the socket.
-                bool cont = handle_connection(&state, datagram_socket);
-                if (!cont) { // get ready for a new connection
-                    printf("reset\n");
-                    sockets[0].events = POLLIN;
-                    sockets[1].events = POLLIN;
-                    sockets[2].fd = -1;
-                    sockets[2].events = 0;
-                    if (sockets[1].fd != datagram_socket) {
-                        sockets[1].fd = -1;
-                        sockets[1].events = 0;
-                    }
-                }
-            }
-        }
+    pthread_t tcp_thread, udp_thread;
+    if (pthread_create(&tcp_thread, NULL, tcp_thread_function, &server_socket) != 0) {
+        perror("pthread_create (TCP)");
+        exit(EXIT_FAILURE);
+    }
+    if (pthread_create(&udp_thread, NULL, udp_thread_function, &datagram_socket) != 0) {
+        perror("pthread_create (UDP)");
+        exit(EXIT_FAILURE);
     }
 
+    // Wait for threads to finish (optional)
+    pthread_join(tcp_thread, NULL);
+    pthread_join(udp_thread, NULL);
+
+    // Clean up
+    close(server_socket);
+    close(datagram_socket);
+
     return EXIT_SUCCESS;
+   
 }
 
 /**
@@ -296,7 +333,7 @@ void send_reply(int conn, struct request *request, int udp_socket) {
             memcpy(reply + payload_offset, resource, resource_length);
             offset = payload_offset + resource_length;
         } else {
-            if (strcmp(PRED_ID, SUCC_ID) == 0 && uri_hash != atoi(ID)) { // nothing to look for
+            if ((uri_hash < atoi(ID) && uri_hash >= atoi(PRED_ID)) || (strcmp(PRED_ID, SUCC_ID) == 0 && uri_hash != atoi(ID))) { // nothing to look for
                 // snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation:%s:%s%s\r\nContent-Length: 0\r\n\r\n", SUCC_IP, SUCC_PORT, request->uri);
                 reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
             } else {
@@ -319,28 +356,29 @@ void send_reply(int conn, struct request *request, int udp_socket) {
                     add_request(new_request);
 
                 } else {
-
-                    int index = fetch_req_index(uri_hash); 
+                    // print_lookup_requests(requests, request_count);
+                    int index = normal_fetch_index(uri_hash); 
+                    // printf("index: %d\n", index);
                     if (requests[index].node_ip == NULL || requests[index].node_port == NULL) {
-                        printf("here 404\n");
                         reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
                     } else {
-                        snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation:%s:%s%s\r\nContent-Length: 0\r\n\r\n", requests[index].node_ip, requests[index].node_port, request->uri);
+                        printf("request uri: %s", request->uri);
+                        char port_str[6]; // Enough to hold a 5-digit port number and a null terminator
+                        snprintf(port_str, sizeof(port_str), "%u", requests[index].node_port);
+                        
+                        snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation: http://%s:%s%s\r\nContent-Length: 0\r\n\r\n", 
+                                requests[index].node_ip, port_str, request->uri);
                         memset(&requests[index], 0, sizeof(struct request));
                     }
                     
                 }
-
-                
-
-
             }
             offset = strlen(reply);
         }
     } else if (strcmp(request->method, "PUT") == 0) {
         // Try to set the requested resource with the given payload in the
         // 'resources' array.
-        if (set(uri_hash_string, request->payload, request->payload_length,
+        if (set(request->uri, request->payload, request->payload_length,
                 resources, MAX_RESOURCES)) {
             reply = "HTTP/1.1 204 No Content\r\n\r\n";
         } else {
@@ -349,7 +387,7 @@ void send_reply(int conn, struct request *request, int udp_socket) {
         offset = strlen(reply);
     } else if (strcmp(request->method, "DELETE") == 0) {
         // Try to delete the requested resource from the 'resources' array
-        if (delete (uri_hash_string, resources, MAX_RESOURCES)) {
+        if (delete (request->uri, resources, MAX_RESOURCES)) {
             reply = "HTTP/1.1 204 No Content\r\n\r\n";
         } else {
             reply = "HTTP/1.1 404 Not Found\r\n\r\n";
@@ -665,17 +703,29 @@ int has_request(uint16_t hash_id) {
 }
 
 void find_and_write(uint16_t hash_id, char* ip, char* port) {
-    for (int i = 0;i < MAX_REQUESTS;i++) {
+    for (int i = 0; i < MAX_REQUESTS; i++) {
         if (requests[i].hash_id == hash_id) {
-            requests[i].node_ip = ip;
-            requests[i].node_port = port;
+            // Safely copy the IP string
+            strncpy(requests[i].node_ip, ip, INET_ADDRSTRLEN);
+            requests[i].node_ip[INET_ADDRSTRLEN - 1] = '\0'; // Ensure null-termination
+            
+            // Convert the port from string to uint16_t and assign
+            requests[i].node_port = (uint16_t)atoi(port);
             return;
         }
     }
 }
 
-int fetch_req_index(uint16_t hash_id) {
-    for (int i = 0;i < MAX_REQUESTS;i++) {
+
+int fetch_req_index(uint16_t hash_id, uint16_t current_id) {
+    for (int i = 0;i < request_count;i++) {
+        if (requests[i].hash_id >= hash_id && requests[i].hash_id < current_id) return i;
+    }
+    return -1;
+}
+
+int normal_fetch_index(uint16_t hash_id) {
+    for (int i = 0;i < request_count;i++) {
         if (requests[i].hash_id == hash_id) return i;
     }
     return -1;
