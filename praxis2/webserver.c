@@ -171,36 +171,28 @@ void *udp_thread_function(void *arg) {
         struct message *received_msg = (struct message *)buffer;
 
         // Access the fields of the unpacked struct
-        printf("Received UDP message:\n");
-        printf("  Message Type: %u\n", received_msg->message_type);
+        // printf("Received UDP message:\n");
+        // printf("  Message Type: %u\n", received_msg->message_type);
         // printf("  PRED ID: %u\n", atoi(PRED_ID)); 
-        printf("  CURR ID: %u\n", atoi(ID)); 
-        printf("  Hash ID: %u\n", ntohs(received_msg->hash_id));  // Convert from network to host byte order
+        // printf("  CURR ID: %u\n", atoi(ID)); 
+        // printf("  Hash ID: %u\n", ntohs(received_msg->hash_id));  // Convert from network to host byte order
         // printf("  SUCC ID: %u\n", atoi((SUCC_ID))); 
-        printf("  Node ID: %u\n", ntohs(received_msg->node_id));  // Convert from network to host byte order
-        char ip_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str)); // Convert IP to string
-        printf("  IP Address: %s\n", ip_str);
-        printf("  Node Port: %u\n", ntohs(received_msg->node_port)); 
+        // printf("  Node ID: %u\n", ntohs(received_msg->node_id));  // Convert from network to host byte order
+        // char ip_str[INET_ADDRSTRLEN];
+        // inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str)); // Convert IP to string
+        // printf("  IP Address: %s\n", ip_str);
+        // printf("  Node Port: %u\n", ntohs(received_msg->node_port)); 
         // printf("  SUCC IP: %s\n", SUCC_IP);
         // printf("  SUCC Port: %s\n", SUCC_PORT); 
 
         if (received_msg->message_type == 0) {
-            if (ntohs(received_msg->hash_id) > atoi(ID) && ntohs(received_msg->hash_id) < atoi(SUCC_ID)) { // Successor responsible
-                printf("res\n");
+           
+            if ((ntohs(received_msg->hash_id) > atoi(ID) && ntohs(received_msg->hash_id) < atoi(SUCC_ID))
+            || (atoi(ID) > atoi(SUCC_ID) && received_msg->hash_id < atoi(ID) && ntohs(received_msg->hash_id) <= atoi(SUCC_ID))) { // Successor responsible
                 send_udp_message(datagram_socket , 1, htons(atoi(ID)), htons(atoi(SUCC_ID)), SUCC_IP, htons(atoi(SUCC_PORT)), 
                 received_msg->ip_address, received_msg->node_port);
             } 
-            // else if (ntohs(received_msg->hash_id) < atoi(ID) && ntohs(received_msg->hash_id) >= atoi(PRED_ID)) { // Current responsible
-            //     // send_udp_message(datagram_socket , 1, htons(atoi(PRED_ID)), htons(atoi(ID)), IP, htons(atoi(PORT)), 
-            //     // received_msg->ip_address, received_msg->node_port);
-            //     printf("We are responsible\n");
-            //     continue;
-            // } 
             else { // forward lookup
-                char ip_succ[INET_ADDRSTRLEN];
-                inet_ntop(AF_INET, &received_msg->ip_address, ip_str, sizeof(ip_str));
-
                 struct sockaddr_in udp_addr;
                 memset(&udp_addr, 0, sizeof(udp_addr));
                 udp_addr.sin_family = AF_INET;
@@ -213,16 +205,18 @@ void *udp_thread_function(void *arg) {
                 ip_str, received_msg->node_port, udp_addr.sin_addr, udp_addr.sin_port);    
 
             }
+            
+            
         } else {
-            printf("got reply\n");
+            // printf("got reply\n");
             // find lookup in requests[] and write
             int index = fetch_req_index(received_msg->hash_id, ntohs(received_msg->node_id));
             if (index >= 0) {
-                printf("request found overwriting...\n");
+                // printf("request found overwriting...\n");
                 inet_ntop(AF_INET, &received_msg->ip_address, requests[index].node_ip, sizeof(requests[index].node_ip));
                 requests[index].node_port = ntohs(received_msg->node_port);
             } else {
-                printf("request not found\n");
+                // printf("request not found\n");
                 perror("hash not found");
             }
         }
@@ -312,91 +306,103 @@ void send_reply(int conn, struct request *request, int udp_socket) {
     size_t offset = 0;
 
     // fprintf(stderr, "Handling %s request for %s (%lu byte payload)\n",
-            // request->method, request->uri, request->payload_length);
+    //         request->method, request->uri, request->payload_length);
 
     uint16_t uri_hash = pseudo_hash((const unsigned char *)request->uri, strlen(request->uri));
     
     char uri_hash_string[6];  // Buffer to hold the string representation of the number (5 digits + null terminator)
     snprintf(uri_hash_string, sizeof(uri_hash_string), "%u", uri_hash);
-    // printf("%s\n", uri_hash_string);
+    printf("%s\n", uri_hash_string);
 
-    if (strcmp(request->method, "GET") == 0) {
+    if ((uri_hash < atoi(ID) && uri_hash >= atoi(PRED_ID)) 
+    || (strcmp(PRED_ID, SUCC_ID) == 0 && uri_hash != atoi(ID)) 
+    || (uri_hash <= atoi(ID) && uri_hash < atoi(PRED_ID) && atoi(PRED_ID) > atoi(ID))) { // nothing to look for
+    //    fprintf(stderr,"responsible node found %d: %d\n", uri_hash, atoi(ID));
+        // snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation:%s:%s%s\r\nContent-Length: 0\r\n\r\n", SUCC_IP, SUCC_PORT, request->uri);
+       if (strcmp(request->method, "GET") == 0) {
         // Find the resource with the given URI in the 'resources' array.
-        size_t resource_length;
-        const char *resource =
-            get(uri_hash_string, resources, MAX_RESOURCES, &resource_length);
+            size_t resource_length;
+            const char *resource =
+                get(request->uri, resources, MAX_RESOURCES, &resource_length);
 
-        if (resource) {
-            size_t payload_offset =
-                sprintf(reply, "HTTP/1.1 200 OK\r\nContent-Length: %lu\r\n\r\n",
-                        resource_length);
-            memcpy(reply + payload_offset, resource, resource_length);
-            offset = payload_offset + resource_length;
-        } else {
-            if ((uri_hash < atoi(ID) && uri_hash >= atoi(PRED_ID)) || (strcmp(PRED_ID, SUCC_ID) == 0 && uri_hash != atoi(ID))) { // nothing to look for
-                // snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation:%s:%s%s\r\nContent-Length: 0\r\n\r\n", SUCC_IP, SUCC_PORT, request->uri);
-                reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            if (resource) {
+                size_t payload_offset =
+                    sprintf(reply, "HTTP/1.1 200 OK\r\nContent-Length: %lu\r\n\r\n",
+                            resource_length);
+                memcpy(reply + payload_offset, resource, resource_length);
+                offset = payload_offset + resource_length;
             } else {
-                
-                if (!has_request(uri_hash)) {
-                    
-                    reply = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n";
-                    // Send the lookup request (uri_hash and uri)
-                    struct sockaddr_in udp_addr;
-                    memset(&udp_addr, 0, sizeof(udp_addr));
-                    udp_addr.sin_family = AF_INET;
-                    udp_addr.sin_port = htons(atoi(SUCC_PORT));          
-                    inet_pton(AF_INET, SUCC_IP, &udp_addr.sin_addr);      
-
-                    send_udp_message(udp_socket, 0, htons(uri_hash), htons(atoi(ID)), IP, htons(atoi(PORT)), udp_addr.sin_addr, udp_addr.sin_port);
-
-                    struct lookup_request new_request;
-                    memset(&new_request, 0, sizeof(new_request));
-                    new_request.hash_id = uri_hash;
-                    add_request(new_request);
-
-                } else {
-                    // print_lookup_requests(requests, request_count);
-                    int index = normal_fetch_index(uri_hash); 
-                    // printf("index: %d\n", index);
-                    if (requests[index].node_ip == NULL || requests[index].node_port == NULL) {
-                        reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
-                    } else {
-                        printf("request uri: %s", request->uri);
-                        char port_str[6]; // Enough to hold a 5-digit port number and a null terminator
-                        snprintf(port_str, sizeof(port_str), "%u", requests[index].node_port);
-                        
-                        snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation: http://%s:%s%s\r\nContent-Length: 0\r\n\r\n", 
-                                requests[index].node_ip, port_str, request->uri);
-                        memset(&requests[index], 0, sizeof(struct request));
-                    }
-                    
-                }
+                reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                offset = strlen(reply);
+            }
+        } else if (strcmp(request->method, "PUT") == 0) {
+            // Try to set the requested resource with the given payload in the
+            // 'resources' array.
+            printf("putting\n");
+            if (set(request->uri, request->payload, request->payload_length,
+                    resources, MAX_RESOURCES)) {
+                reply = "HTTP/1.1 204 No Content\r\n\r\n";
+            } else {
+                reply = "HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n";
             }
             offset = strlen(reply);
-        }
-    } else if (strcmp(request->method, "PUT") == 0) {
-        // Try to set the requested resource with the given payload in the
-        // 'resources' array.
-        if (set(request->uri, request->payload, request->payload_length,
-                resources, MAX_RESOURCES)) {
-            reply = "HTTP/1.1 204 No Content\r\n\r\n";
+        } else if (strcmp(request->method, "DELETE") == 0) {
+            // Try to delete the requested resource from the 'resources' array
+            if (delete (request->uri, resources, MAX_RESOURCES)) {
+                reply = "HTTP/1.1 204 No Content\r\n\r\n";
+            } else {
+                reply = "HTTP/1.1 404 Not Found\r\n\r\n";
+            }
+            offset = strlen(reply);
         } else {
-            reply = "HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n";
+            reply = "HTTP/1.1 501 Method Not Supported\r\n\r\n";
+            offset = strlen(reply);
         }
-        offset = strlen(reply);
-    } else if (strcmp(request->method, "DELETE") == 0) {
-        // Try to delete the requested resource from the 'resources' array
-        if (delete (request->uri, resources, MAX_RESOURCES)) {
-            reply = "HTTP/1.1 204 No Content\r\n\r\n";
-        } else {
-            reply = "HTTP/1.1 404 Not Found\r\n\r\n";
-        }
-        offset = strlen(reply);
     } else {
-        reply = "HTTP/1.1 501 Method Not Supported\r\n\r\n";
+        //  fprintf(stderr,"responsible node NOT found\n");
+        if (!has_request(uri_hash)) {
+            
+            if (uri_hash > atoi(ID) && uri_hash < atoi(SUCC_ID)) {
+                snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation: http://%s:%s%s\r\nContent-Length: 0\r\n\r\n", 
+                        SUCC_IP, SUCC_PORT, request->uri);
+            } else {
+                reply = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n";
+                // Send the lookup request (uri_hash and uri)
+                struct sockaddr_in udp_addr;
+                memset(&udp_addr, 0, sizeof(udp_addr));
+                udp_addr.sin_family = AF_INET;
+                udp_addr.sin_port = htons(atoi(SUCC_PORT));          
+                inet_pton(AF_INET, SUCC_IP, &udp_addr.sin_addr);      
+
+                send_udp_message(udp_socket, 0, htons(uri_hash), htons(atoi(ID)), IP, htons(atoi(PORT)), udp_addr.sin_addr, udp_addr.sin_port);
+
+                struct lookup_request new_request;
+                memset(&new_request, 0, sizeof(new_request));
+                new_request.hash_id = uri_hash;
+                add_request(new_request);
+            }
+            
+        } else {
+            // print_lookup_requests(requests, request_count);
+            int index = normal_fetch_index(uri_hash); 
+            // printf("index: %d\n", index);
+            if (requests[index].node_ip == NULL || requests[index].node_port == NULL) {
+                reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            } else {
+                printf("request uri: %s", request->uri);
+                char port_str[6]; // Enough to hold a 5-digit port number and a null terminator
+                snprintf(port_str, sizeof(port_str), "%u", requests[index].node_port);
+                
+                snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation: http://%s:%s%s\r\nContent-Length: 0\r\n\r\n", 
+                        requests[index].node_ip, port_str, request->uri);
+            }
+            
+        }
         offset = strlen(reply);
     }
+    
+
+    
 
     // Send the reply back to the client
     if (send(conn, reply, offset, 0) == -1) {
@@ -719,7 +725,8 @@ void find_and_write(uint16_t hash_id, char* ip, char* port) {
 
 int fetch_req_index(uint16_t hash_id, uint16_t current_id) {
     for (int i = 0;i < request_count;i++) {
-        if (requests[i].hash_id >= hash_id && requests[i].hash_id < current_id) return i;
+        if ((requests[i].hash_id >= hash_id && requests[i].hash_id < current_id)
+        || (hash_id > current_id && requests[i].hash_id < hash_id && requests[i].hash_id <= current_id)) return i;
     }
     return -1;
 }
