@@ -171,7 +171,8 @@ void *udp_thread_function(void *arg) {
         if (received_msg->message_type == 0) {
            
             if ((ntohs(received_msg->hash_id) > atoi(ID) && ntohs(received_msg->hash_id) < atoi(SUCC_ID))
-            || (atoi(ID) > atoi(SUCC_ID) && received_msg->hash_id < atoi(ID) && ntohs(received_msg->hash_id) <= atoi(SUCC_ID))) { // Successor responsible
+            || (atoi(ID) > atoi(SUCC_ID) && received_msg->hash_id < atoi(ID) && ntohs(received_msg->hash_id) <= atoi(SUCC_ID))
+            || (atoi(ID) > atoi(SUCC_ID) && received_msg->hash_id > atoi(ID) && ntohs(received_msg->hash_id) >= atoi(SUCC_ID))) { // Successor responsible
                 send_udp_message(datagram_socket , 1, htons(atoi(ID)), htons(atoi(SUCC_ID)), SUCC_IP, htons(atoi(SUCC_PORT)), 
                 received_msg->ip_address, received_msg->node_port);
             } 
@@ -305,9 +306,9 @@ void send_reply(int conn, struct request *request, int udp_socket) {
     snprintf(uri_hash_string, sizeof(uri_hash_string), "%u", uri_hash);
     printf("%s\n", uri_hash_string);
 
-    if ((uri_hash < atoi(ID) && uri_hash >= atoi(PRED_ID)) 
-    || (strcmp(PRED_ID, SUCC_ID) == 0 && uri_hash != atoi(ID)) 
-    || (uri_hash <= atoi(ID) && uri_hash < atoi(PRED_ID) && atoi(PRED_ID) > atoi(ID))) { // nothing to look for
+    if ((uri_hash < atoi(ID) && uri_hash >= atoi(PRED_ID)) // || (strcmp(PRED_ID, SUCC_ID) == 0 && uri_hash != atoi(ID)) 
+    || (uri_hash <= atoi(ID) && uri_hash < atoi(PRED_ID) && atoi(PRED_ID) > atoi(ID))
+    || (uri_hash >= atoi(ID) && uri_hash > atoi(PRED_ID) && atoi(PRED_ID) > atoi(ID))) { // nothing to look for
     //    fprintf(stderr,"responsible node found %d: %d\n", uri_hash, atoi(ID));
         // snprintf(reply, HTTP_MAX_SIZE, "HTTP/1.1 303 See Other\r\nLocation:%s:%s%s\r\nContent-Length: 0\r\n\r\n", SUCC_IP, SUCC_PORT, request->uri);
        if (strcmp(request->method, "GET") == 0) {
@@ -707,7 +708,8 @@ void find_and_write(uint16_t hash_id, char* ip, char* port) {
 int fetch_req_index(uint16_t hash_id, uint16_t current_id) {
     for (int i = 0;i < request_count;i++) {
         if ((requests[i].hash_id >= hash_id && requests[i].hash_id < current_id)
-        || (hash_id > current_id && requests[i].hash_id < hash_id && requests[i].hash_id <= current_id)) return i;
+        || (hash_id > current_id && requests[i].hash_id < hash_id && requests[i].hash_id <= current_id)
+        || (hash_id > current_id && requests[i].hash_id > hash_id && requests[i].hash_id >= current_id)) return i;
     }
     return -1;
 }
