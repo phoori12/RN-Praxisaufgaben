@@ -249,10 +249,19 @@ int main(int argc, char **argv) {
     // Set up a datagram socket
     int datagram_socket = setup_datagram_socket(argv[1], argv[2]);
 
+    struct tcp_thread_args *args = malloc(sizeof(struct tcp_thread_args));
+    if (!args) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    args->server_socket = server_socket;
+    args->datagram_socket = datagram_socket;
+
 
     pthread_t tcp_thread, udp_thread;
-    if (pthread_create(&tcp_thread, NULL, tcp_thread_function, &server_socket) != 0) {
+    if (pthread_create(&tcp_thread, NULL, tcp_thread_function, (void *)args) != 0) {
         perror("pthread_create (TCP)");
+        free(args);
         exit(EXIT_FAILURE);
     }
     if (pthread_create(&udp_thread, NULL, udp_thread_function, &datagram_socket) != 0) {
