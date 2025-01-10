@@ -29,13 +29,13 @@ echo "Building submission..."
 BUILD_DIR=$(mktemp -d)
 cmake -S"${EXTRACTED_SOURCE_DIR}" -B${BUILD_DIR}
 TARGET="webserver"
-EXECUTABLE="--executable ${BUILD_DIR}/webserver"
+EXECUTABLE="--executable=${BUILD_DIR}/webserver"
 if [[ "$1" == "praxis0" ]]; then
 	TARGET="hello_world"
-	EXECUTABLE="--executable ${BUILD_DIR}/hello_world"
+	EXECUTABLE="--executable=${BUILD_DIR}/hello_world"
 elif [[ "$1" == "praxis3" ]]; then
 	TARGET="zmq_distributor zmq_worker"
-	EXECUTABLE="--dist_exec ${BUILD_DIR}/zmq_distributor --work_exec ${BUILD_DIR}/zmq_worker"
+	EXECUTABLE="--dist_exec=${BUILD_DIR}/zmq_distributor --work_exec ${BUILD_DIR}/zmq_worker"
 fi
 cmake --build ${BUILD_DIR} -t ${TARGET}
 
