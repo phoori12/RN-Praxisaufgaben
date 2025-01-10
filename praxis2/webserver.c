@@ -21,22 +21,22 @@
 #define MAX_REQUESTS 10
 
 struct tuple resources[MAX_RESOURCES] = {
-    {"/static/foo", "Foo", sizeof "Foo" - 1}, // "/static/foo" 44834
-    {"/static/bar", "Bar", sizeof "Bar" - 1}, // "/static/bar" 45104
-    {"/static/baz", "Baz", sizeof "Baz" - 1}}; // "/static/baz" 43056
+    {"/static/foo", "Foo", sizeof "Foo" - 1},   // "/static/foo" 44834
+    {"/static/bar", "Bar", sizeof "Bar" - 1},   // "/static/bar" 45104
+    {"/static/baz", "Baz", sizeof "Baz" - 1}};  // "/static/baz" 43056
 
 struct message {
-    uint8_t message_type;        // 1 byte
-    uint16_t hash_id;     // 2 bytes
-    uint16_t node_id;     // 2 bytes
+    uint8_t message_type;           // 1 byte
+    uint16_t hash_id;               // 2 bytes
+    uint16_t node_id;               // 2 bytes
     struct in_addr ip_address;      // 4 bytes 
-    uint16_t node_port;     // 2 bytes
+    uint16_t node_port;             // 2 bytes
 } __attribute__((packed));
 
 struct lookup_request {
-    uint16_t hash_id;     // Unique identifier for the request
-    char node_ip[INET_ADDRSTRLEN];     // Node IP (IPv4 as string, e.g., "127.0.0.1")
-    uint16_t node_port;   // Node port
+    uint16_t hash_id;               // Unique identifier for the request
+    char node_ip[INET_ADDRSTRLEN];  // Node IP (IPv4 as string, e.g., "127.0.0.1")
+    uint16_t node_port;             // Node port
 };
 
 struct tcp_thread_args {
@@ -44,7 +44,7 @@ struct tcp_thread_args {
     int datagram_socket;    // UDP socket
 };
 
-int request_count = 0; // Tracks the number of stored requests
+int request_count = 0;      // Tracks the number of stored requests
 struct lookup_request requests[MAX_REQUESTS];
 
 char *PRED_ID, *PRED_IP, *PRED_PORT, *SUCC_ID, *SUCC_IP, *SUCC_PORT, *ID, *IP, *PORT;
@@ -65,21 +65,7 @@ int fetch_req_index(uint16_t hash_id, uint16_t current_id);
 int normal_fetch_index(uint16_t hash_id);
 void *tcp_thread_function(void *arg);
 void *udp_thread_function(void *arg);
-
-void print_lookup_requests(struct lookup_request* requests, size_t count) {
-    if (requests == NULL || count == 0) {
-        printf("No lookup requests to print.\n");
-        return;
-    }
-
-    printf("Lookup Requests:\n");
-    for (size_t i = 0; i < count; i++) {
-        printf("Request %zu:\n", i + 1);
-        printf("  Hash ID: %u\n", requests[i].hash_id);
-        printf("  Node IP: %s\n", requests[i].node_ip ? requests[i].node_ip : "N/A");
-        printf("  Node Port: %u\n", requests[i].node_port);
-    }
-}
+void print_lookup_requests(struct lookup_request* requests, size_t count);
 
 void *tcp_thread_function(void *args) {
     struct tcp_thread_args *thread_args = (struct tcp_thread_args *)args;
@@ -145,9 +131,6 @@ void *tcp_thread_function(void *args) {
 
 void *udp_thread_function(void *arg) {
     int datagram_socket = *(int *)arg;
-    char buffer[1024];
-    struct sockaddr_in sender_addr;
-    socklen_t addr_len = sizeof(sender_addr);
 
     while (true) {
         // Handle message forwarding and reply logic
@@ -162,7 +145,7 @@ void *udp_thread_function(void *arg) {
             continue;
         }
 
-        if (num_bytes < sizeof(struct message)) {
+        if (num_bytes < (ssize_t)sizeof(struct message)) {
             fprintf(stderr, "Received message is too short to unpack\n");
             continue;
         }
@@ -208,7 +191,6 @@ void *udp_thread_function(void *arg) {
             
             
         } else {
-            // printf("got reply\n");
             // find lookup in requests[] and write
             int index = fetch_req_index(received_msg->hash_id, ntohs(received_msg->node_id));
             if (index >= 0) {
@@ -338,7 +320,6 @@ void send_reply(int conn, struct request *request, int udp_socket) {
         } else if (strcmp(request->method, "PUT") == 0) {
             // Try to set the requested resource with the given payload in the
             // 'resources' array.
-            printf("putting\n");
             if (set(request->uri, request->payload, request->payload_length,
                     resources, MAX_RESOURCES)) {
                 reply = "HTTP/1.1 204 No Content\r\n\r\n";
@@ -386,10 +367,9 @@ void send_reply(int conn, struct request *request, int udp_socket) {
             // print_lookup_requests(requests, request_count);
             int index = normal_fetch_index(uri_hash); 
             // printf("index: %d\n", index);
-            if (requests[index].node_ip == NULL || requests[index].node_port == NULL) {
+            if (requests[index].node_ip == NULL) {
                 reply = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
             } else {
-                printf("request uri: %s", request->uri);
                 char port_str[6]; // Enough to hold a 5-digit port number and a null terminator
                 snprintf(port_str, sizeof(port_str), "%u", requests[index].node_port);
                 
@@ -401,9 +381,6 @@ void send_reply(int conn, struct request *request, int udp_socket) {
         offset = strlen(reply);
     }
     
-
-    
-
     // Send the reply back to the client
     if (send(conn, reply, offset, 0) == -1) {
         perror("send");
@@ -617,11 +594,6 @@ static int setup_datagram_socket(const char *host, const char *port) {
     const int enable = 1;
     int rv, sock;
 
-    if (sock == -1) {
-        perror("UDP socket");
-        exit(EXIT_FAILURE);
-    }
-
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET; 
     hints.ai_socktype = SOCK_DGRAM;
@@ -736,4 +708,19 @@ int normal_fetch_index(uint16_t hash_id) {
         if (requests[i].hash_id == hash_id) return i;
     }
     return -1;
+}
+
+void print_lookup_requests(struct lookup_request* requests, size_t count) {
+    if (requests == NULL || count == 0) {
+        printf("No lookup requests to print.\n");
+        return;
+    }
+
+    printf("Lookup Requests:\n");
+    for (size_t i = 0; i < count; i++) {
+        printf("Request %zu:\n", i + 1);
+        printf("  Hash ID: %u\n", requests[i].hash_id);
+        printf("  Node IP: %s\n", requests[i].node_ip ? requests[i].node_ip : "N/A");
+        printf("  Node Port: %u\n", requests[i].node_port);
+    }
 }
