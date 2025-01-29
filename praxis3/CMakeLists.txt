@@ -7,8 +7,8 @@ set(CMAKE_C_STANDARD 11) # Wir verwenden C-Version C11
 find_library(ZeroMQ zmq REQUIRED)
 
 # Diese Zeile ist die Anweisung, dass wir eine ausführbare Datei erstellen wollen
-add_executable(zmq_distributor zmq_distributor.c)
-add_executable(zmq_worker zmq_worker.c)
+add_executable(zmq_distributor zmq_distributor.c data.c)
+add_executable(zmq_worker zmq_worker.c data.c)
 
 target_compile_options(zmq_distributor PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_options(zmq_worker PRIVATE -Wall -Wextra -Wpedantic)

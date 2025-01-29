@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <pthread.h>
 
+
 typedef struct {
     void *context;
     char *port;
@@ -30,13 +31,13 @@ static void *worker_routine (void *arg) {
 
         if (strcmp(string, "rip") == 0) {
             s_send(worker, "rip");
+            free(string);
             break;
-        } else {
-            s_send(worker, "");
-        }
-        free(string);
-       
+        } 
+
+        s_send(worker, "");
         
+        free(string);
     }
 
     zmq_close(worker);
