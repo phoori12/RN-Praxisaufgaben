@@ -12,20 +12,22 @@ typedef struct {
     char *port;
 } worker_args_t;
 
-void filter_non_alpha(char *text) {
+void filter_non_alpha(char *str) {
     int i = 0, j = 0;
-    while (text[i]) {
-        if (isalpha((unsigned char)text[i])) {
-            text[j++] = text[i];  // Keep the alphabetical character
+    while (str[i] != '\0') {
+        if (isalpha(str[i]) || str[i] == ' ') {
+            str[j++] = str[i];
         }
         i++;
     }
-    text[j] = '\0';  // Null-terminate the filtered string
+    str[j] = '\0';  // Null-terminate the filtered string
 }
 
 char* map(char *text) {
     static char result[MAX_PAYLOAD_LEN];
     result[0] = '\0';  // Initialize empty result
+    
+    filter_non_alpha(text);
     
     // Hashmap (array of pointers to linked lists)
     HashMap *hashmap[HASH_SIZE] = {NULL};
@@ -169,19 +171,22 @@ int main(int argc, char **argv) {
 
     zmq_ctx_destroy(context);
 
-    // char map_message[] = "mapInteroperability test. Test uses python distributor. Test interoperability again.\0";
+//     char map_message[] = "mapdiSLOdGing; PRESUPERFIciAliTy* CabrEe% MiDAXIllaRY{ EmBrEAthEMENT\" SUPeriorsHiP) zOochEmiSTRY, HErEoF{ glEeS^ mEsoCaDIa# VERsEts$ berBeris, caTcHY! PRovIrAl` OVErpaRTIcULARITy# PochAY$ DEtonabiLITY~ MoNOcOtS} OVeRelLipticAllY{ UrsId# DOwAGERISm\" sLIDdER: DEMeTRIAN, SIGilLArIa{ alnAGeR- verBUm/ StrEmmaS, SOrROweD< UNCoNTRaSTablE] SONneTish) shaCkING$ gOrgEdLy> brAnDeD| hIPPOTomiSt- SalTceLlARs: AnnEliD= GasTRonOMiC- GNaThOPOd, grovElinglY( reaCcedinG$ COmpenDIatE: PALAY; UnABRidgEd( PROvIDEntiAlISm< conTrAvindICATE? proVIDeNTiAlIsm] cosubOrdInATe? HoNORaBiLitY] rECOnSoliDATed, fiCtIONIzEd? ViSaGes= deFerRalS= InciTaTE[ UNfAtIgUeAbLe$ OUtdroPS@ TRANSOCeAn> theOpOLiTiCs? unWHIRLeD/ InTErdEPendaBle& flOaTIEST) TEtRaPtOtE+ UNcostumeD) kuRi` SeSaMEs` VACILLAnT! pYroBI! OilmONgery' LoAFED\\ iNFILtraTIoNs] sPheRIForm. SYndIcAlIST: MEthoDIZed* PUNctuATioniST\\ CoMPreSeNT, OVeracCURaCY* sUlfIoN( lIPIDE\\ 
+// - cHlOraL& TRIcKSILy+ spleNoid]";
 
-    // char *map_result, *red_result;
+//     filter_non_alpha(map_message);
 
-    // char *actual_message = map_message + 3; 
+//     char *map_result, *red_result;
 
-    // map_result = map(actual_message);
+//     char *actual_message = map_message + 3; 
 
-    // printf("%s \n", map_result);
+//     map_result = map(actual_message);
 
-    // red_result = reduce(map_result);
+//     printf("%s \n", map_result);
 
-    // printf("%s \n", red_result); // interoperability1test2uses1python1distributor1
+//     red_result = reduce(map_result);
+
+//     printf("%s \n", red_result); // interoperability1test2uses1python1distributor1
 
     // Tree *node = NULL;
     // split_and_store(red_result, &node);
