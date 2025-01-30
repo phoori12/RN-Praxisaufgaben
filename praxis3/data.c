@@ -28,6 +28,22 @@ void add_to_queue(QueueList** head, const char* message) {
     }
 }
 
+void poll_from_queue(QueueList** head, char* buffer, size_t bufsize) {
+    if (*head == NULL) {
+        buffer[0] = '\0';  // Return an empty string if the queue is empty
+        return;
+    }
+
+    // Copy the message into the provided buffer
+    strncpy(buffer, (*head)->msg, bufsize - 1);
+    buffer[bufsize - 1] = '\0'; // Ensure null termination
+
+    // Free the queue node
+    QueueList* temp_node = *head;
+    *head = (*head)->next;
+    free(temp_node);
+}
+
 // Function to delete a message from the queue (FIFO)
 void delete_from_queue(QueueList** head) {
     if (*head == NULL) {
@@ -59,4 +75,55 @@ void print_queue(QueueList* head) {
     }
 
     printf("Total Queued: %d\n", total);
+}
+
+// Hash function (simple sum of characters)
+int hash_function(const char *word) {
+    int hash = 0;
+    while (*word) hash += *word++;
+    return hash % HASH_SIZE;
+}
+
+// Converts a string to lowercase
+void to_lowercase(char *str) {
+    for (int i = 0; str[i]; i++) {
+        str[i] = tolower(str[i]);
+    }
+}
+
+// Inserts or updates word in hashmap
+void insert_word(const char *word, HashMap** hashmap, QueueList** word_order) {
+    int hash = hash_function(word);
+    HashMap *curr = hashmap[hash];
+
+    // Search if word already exists in hashmap
+    while (curr) {
+        if (strcmp(curr->word, word) == 0) {
+            curr->count++;
+            return;
+        }
+        curr = curr->next;
+    }
+
+    // If word is new, insert at head
+    HashMap *new_node = (HashMap *)malloc(sizeof(HashMap));
+    strcpy(new_node->word, word);
+    new_node->count = 1;
+    new_node->next = hashmap[hash];
+    hashmap[hash] = new_node;
+
+    // Store word in order-tracking array
+    add_to_queue(word_order, word);
+}
+
+void free_hashmap(HashMap** hashmap) {
+    for (int i = 0; i < HASH_SIZE; i++) {
+        HashMap *curr = hashmap[i];
+        while (curr) {
+            HashMap *temp = curr;
+            curr = curr->next;
+            free(temp);
+        }
+        hashmap[i] = NULL;
+    }
 }
