@@ -1,1 +1,0 @@
-Interoperability test. Test uses python distributor.

@@ -91,7 +91,6 @@ void to_lowercase(char *str) {
     }
 }
 
-// Inserts or updates word in hashmap
 void insert_word(const char *word, HashMap** hashmap, QueueList** word_order) {
     int hash = hash_function(word);
     HashMap *curr = hashmap[hash];
@@ -116,6 +115,38 @@ void insert_word(const char *word, HashMap** hashmap, QueueList** word_order) {
     add_to_queue(word_order, word);
 }
 
+void insert_normal(const char *word, const int count, HashMap** hashmap) {
+    int hash = hash_function(word);
+    HashMap *curr = hashmap[hash];
+
+    // Search if word already exists in hashmap
+    while (curr) {
+        if (strcmp(curr->word, word) == 0) {
+            curr->count += count;
+            return;
+        }
+        curr = curr->next;
+    }
+
+    // If word is new, insert at head
+    HashMap *new_node = (HashMap *)malloc(sizeof(HashMap));
+    strcpy(new_node->word, word);
+    new_node->count = count;
+    new_node->next = hashmap[hash];
+    hashmap[hash] = new_node;
+}
+
+void print_hashmap(HashMap** hashmap) {
+    printf("Stored Key-Value Pairs:\n");
+    for (int i = 0; i < HASH_SIZE; i++) {
+        HashMap* curr = hashmap[i];
+        while (curr) {
+            printf("%s -> %d\n", curr->word, curr->count);
+            curr = curr->next;
+        }
+    }
+}
+
 void free_hashmap(HashMap** hashmap) {
     for (int i = 0; i < HASH_SIZE; i++) {
         HashMap *curr = hashmap[i];
@@ -126,4 +157,76 @@ void free_hashmap(HashMap** hashmap) {
         }
         hashmap[i] = NULL;
     }
+}
+
+Tree* newNode(const char* key, int value) {
+    Tree* node = (Tree*)malloc(sizeof(Tree));
+    strcpy(node->key, key);
+    node->value = value;
+    node->left = node->right = NULL;
+    return node;
+}
+
+Tree* insert(Tree* root, const char* key, int value) {
+    // Base case: If tree is empty, create a new node
+    if (root == NULL) {
+        return newNode(key, value);
+    }
+
+    // Compare based on value
+    if (value < root->value) {
+        root->left = insert(root->left, key, value);
+    } else if (value > root->value) {
+        root->right = insert(root->right, key, value);
+    } else { // If values are equal, compare keys alphabetically
+        if (strcmp(key, root->key) > 0) {
+            root->left = insert(root->left, key, value);
+        } else {
+            root->right = insert(root->right, key, value);
+        }
+    }
+
+    return root;
+}
+
+Tree* search_node(Tree* root, const char* key) {
+    if (root == NULL) return NULL;
+
+    // Check the current node's key
+    if (strcmp(root->key, key) == 0) {
+        return root;  // Found the node with the matching key
+    }
+
+    // Otherwise, recursively search in the left and right subtrees
+    Tree* found_in_left = search_node(root->left, key);
+    if (found_in_left != NULL) {
+        return found_in_left;  // If found in left subtree, return it
+    }
+
+    return search_node(root->right, key);
+}
+
+Tree* hashmap_to_tree(HashMap** hashmap, Tree* root) {
+    for (int i = 0; i < HASH_SIZE; i++) {
+        HashMap* curr = hashmap[i];
+        while (curr) {
+            root = insert(root, curr->word, curr->count);
+            curr = curr->next;
+        }
+    }
+    return root;
+}
+
+void traverseDescending(Tree* root) {
+    if (root == NULL) return;
+    traverseDescending(root->right);  // Visit right subtree
+    printf("%s,%d\n", root->key, root->value); // Print node
+    traverseDescending(root->left);   // Visit left subtree
+}
+
+void freeTree(Tree* root) {
+    if (root == NULL) return;
+    freeTree(root->left);
+    freeTree(root->right);
+    free(root);
 }

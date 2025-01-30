@@ -12,10 +12,21 @@ typedef struct {
     char *port;
 } worker_args_t;
 
-char* map(char *text) {
-    static char result[MAX_MSG_LEN];
-    result[0] = '\0';  // Initialize empty result
+void filter_non_alpha(char *text) {
+    int i = 0, j = 0;
+    while (text[i]) {
+        if (isalpha((unsigned char)text[i])) {
+            text[j++] = text[i];  // Keep the alphabetical character
+        }
+        i++;
+    }
+    text[j] = '\0';  // Null-terminate the filtered string
+}
 
+char* map(char *text) {
+    static char result[MAX_PAYLOAD_LEN];
+    result[0] = '\0';  // Initialize empty result
+    
     // Hashmap (array of pointers to linked lists)
     HashMap *hashmap[HASH_SIZE] = {NULL};
     QueueList* word_order = NULL;
@@ -54,7 +65,7 @@ char* map(char *text) {
 }
 
 char* reduce(const char* text) {
-    static char result[MAX_MSG_LEN];  // Ensure MAX_MSG_LEN is defined
+    static char result[MAX_PAYLOAD_LEN]; 
     result[0] = '\0';  
 
     int i = 0, j = 0, sum = 0;
@@ -89,6 +100,12 @@ char* reduce(const char* text) {
 static void *worker_routine (void *arg) {
     worker_args_t *args = (worker_args_t *)arg;
     void *worker = zmq_socket(args->context, ZMQ_REP);
+    // int sndhwm = 1500;  // Set HWM above your expected message size
+    // zmq_setsockopt(worker, ZMQ_SNDHWM, &sndhwm, sizeof(sndhwm));
+
+    // int sndbuf = 1500;  // Set buffer size above your expected message size
+    // zmq_setsockopt(worker, ZMQ_SNDBUF, &sndbuf, sizeof(sndbuf));
+
 
     char endpoint[256];
     snprintf(endpoint, sizeof(endpoint), "tcp://127.0.0.1:%s", args->port);
@@ -98,10 +115,11 @@ static void *worker_routine (void *arg) {
         return NULL;
     }
 
-    printf("Worker listening on %s\n", endpoint);
+    // printf("Worker listening on %s\n", endpoint);
 
     while (1) {
-        char *string = s_recv(worker);
+        char string[MAX_MSG_LEN];
+        zmq_recv(worker, string, sizeof(string) - 1, 0);
         printf ("Received request: [%s]\n", string);
 
 
@@ -114,16 +132,17 @@ static void *worker_routine (void *arg) {
         } else if (strcmp(string, "rip") == 0) {
             char* result = "rip\0";
             zmq_send (worker, result, strlen (result) + 1, 0);
-            free(string);
+            // free(string);
             break;
         } 
         
-        free(string);
+        // free(string);
     }
 
     zmq_close(worker);
     return NULL;
 }
+
 
 int main(int argc, char **argv) {
     if (argc <= 1) {
@@ -162,8 +181,12 @@ int main(int argc, char **argv) {
 
     // red_result = reduce(map_result);
 
-    // printf("%s \n", red_result);
+    // printf("%s \n", red_result); // interoperability1test2uses1python1distributor1
 
+    // Tree *node = NULL;
+    // split_and_store(red_result, &node);
+
+    // traverseDescending(node);
     // for (int i = 0; i < strlen(map_result) + 1; i++) {
     //     printf("'%c' (%d)\n", map_result[i], map_result[i]);
     // }
