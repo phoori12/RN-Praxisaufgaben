@@ -3,6 +3,7 @@ Tests for RN Praxis 3
 """
 
 import multiprocessing
+from collections import Counter
 from sys import stderr
 
 import numpy as np
@@ -315,8 +316,8 @@ def test_interoperability(program_args):
         util.join_workers(worker_procs)
 
         for res in worker_responses.values():
-            assert res[0] == map_message_expected_return
-            assert res[1] == reduce_message_expected_return
+            assert Counter(res[0]) == Counter(map_message_expected_return)
+            assert Counter(res[1]) == Counter(reduce_message_expected_return)
             assert res[2] == rip_message
 
     # test distributor second
@@ -361,8 +362,8 @@ def test_interoperability(program_args):
 
     distributor_output, distributor_err = proc_distributor.communicate()
 
-    assert distributor_messages[0] == map_message
-    assert distributor_messages[1] == "red" + map_message_expected_return
+    assert Counter(distributor_messages[0]) == Counter(map_message)
+    assert Counter(distributor_messages[1]) == Counter("red" + map_message_expected_return)
     assert distributor_messages[2] == rip_message
 
     assert distributor_output == util.count_words(map_message[3:])

@@ -86,7 +86,6 @@ int main(int argc, char **argv) {
 
     // Poll for responses
     int active_workers = num_workers;
-    int next_worker = 0;
     while (active_workers > 0) {
         zmq_poll(poll_items, num_workers, -1); // Wait indefinitely
         
@@ -116,7 +115,7 @@ int main(int argc, char **argv) {
                         workers_job[i]++;
                     } else if (workers_states[i] == RED) {
                         // saves key,values
-                        split_and_store(response, &words);
+                        split_and_store(response, words);
                         
                         workers_states[i] = IDLE;
 
@@ -156,7 +155,7 @@ int main(int argc, char **argv) {
 
     // print tree
     printf("word,frequency\n");
-    node = hashmap_to_tree(&words, node);
+    node = hashmap_to_tree(words, node);
 
     traverseDescending(node);
 
@@ -167,7 +166,7 @@ int main(int argc, char **argv) {
         free(worker_queue[i]);
     }
 
-    free_hashmap(&words);
+    free_hashmap(words);
 
     // for (int i = 0;i < num_workers;i++) {
     //     printf("worker %d : %d\n", i, workers_job[i]);
