@@ -110,13 +110,14 @@ char* reduce(const char* text) {
 }
 
 static void *worker_routine (void *arg) {
+
     worker_args_t *args = (worker_args_t *)arg;
     void *worker = zmq_socket(args->context, ZMQ_REP);
-    // int sndhwm = 1500;  // Set HWM above your expected message size
-    // zmq_setsockopt(worker, ZMQ_SNDHWM, &sndhwm, sizeof(sndhwm));
+    int sndhwm = 1500;  // Set HWM above your expected message size
+    zmq_setsockopt(worker, ZMQ_SNDHWM, &sndhwm, sizeof(sndhwm));
 
-    // int sndbuf = 1500;  // Set buffer size above your expected message size
-    // zmq_setsockopt(worker, ZMQ_SNDBUF, &sndbuf, sizeof(sndbuf));
+    int sndbuf = 1500;  // Set buffer size above your expected message size
+    zmq_setsockopt(worker, ZMQ_SNDBUF, &sndbuf, sizeof(sndbuf));
 
 
     char endpoint[256];
@@ -150,7 +151,8 @@ static void *worker_routine (void *arg) {
         
         // free(string);
     }
-
+    int linger = 0;
+    free(arg);
     zmq_close(worker);
     return NULL;
 }
@@ -165,13 +167,13 @@ int main(int argc, char **argv) {
     void *context = zmq_ctx_new();
 
     pthread_t workers[worker_procs];
-    worker_args_t args[worker_procs];
 
     // Create worker threads
     for (int i = 1; i < argc; i++) {
-        args[i - 1].context = context;
-        args[i - 1].port = argv[i];
-        pthread_create(&workers[i - 1], NULL, worker_routine, &args[i - 1]);
+        worker_args_t *arg = malloc(sizeof(worker_args_t));
+        arg->context = context;
+        arg->port = argv[i];
+        pthread_create(&workers[i - 1], NULL, worker_routine, arg);
     }
 
     // Join threads
@@ -180,6 +182,10 @@ int main(int argc, char **argv) {
     }
 
     zmq_ctx_destroy(context);
+
+    // for (int i = 0;i < worker_procs;i++) {
+    //     free(workers[i]);
+    // }
 
 //     char map_message[] = "mapdiSLOdGing; PRESUPERFIciAliTy* CabrEe% MiDAXIllaRY{ EmBrEAthEMENT\" SUPeriorsHiP) zOochEmiSTRY, HErEoF{ glEeS^ mEsoCaDIa# VERsEts$ berBeris, caTcHY! PRovIrAl` OVErpaRTIcULARITy# PochAY$ DEtonabiLITY~ MoNOcOtS} OVeRelLipticAllY{ UrsId# DOwAGERISm\" sLIDdER: DEMeTRIAN, SIGilLArIa{ alnAGeR- verBUm/ StrEmmaS, SOrROweD< UNCoNTRaSTablE] SONneTish) shaCkING$ gOrgEdLy> brAnDeD| hIPPOTomiSt- SalTceLlARs: AnnEliD= GasTRonOMiC- GNaThOPOd, grovElinglY( reaCcedinG$ COmpenDIatE: PALAY; UnABRidgEd( PROvIDEntiAlISm< conTrAvindICATE? proVIDeNTiAlIsm] cosubOrdInATe? HoNORaBiLitY] rECOnSoliDATed, fiCtIONIzEd? ViSaGes= deFerRalS= InciTaTE[ UNfAtIgUeAbLe$ OUtdroPS@ TRANSOCeAn> theOpOLiTiCs? unWHIRLeD/ InTErdEPendaBle& flOaTIEST) TEtRaPtOtE+ UNcostumeD) kuRi` SeSaMEs` VACILLAnT! pYroBI! OilmONgery' LoAFED\\ iNFILtraTIoNs] sPheRIForm. SYndIcAlIST: MEthoDIZed* PUNctuATioniST\\ CoMPreSeNT, OVeracCURaCY* sUlfIoN( lIPIDE\\ 
 // - cHlOraL& TRIcKSILy+ spleNoid]";

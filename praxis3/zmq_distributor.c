@@ -54,19 +54,21 @@ int main(int argc, char **argv) {
     }
     
 
-    // int sndhwm = 1500;  // Set HWM above your expected message size
-    // int sndbuf = 1500;  // Set buffer size above your expected message size
+    int sndhwm = 1500;  // Set HWM above your expected message size
+    int sndbuf = 1500;  // Set buffer size above your expected message size
     
     // Create REQ sockets and connect to workers
     for (int i = 0; i < num_workers; i++) {
         workers[i] = zmq_socket(context, ZMQ_REQ);
-        // zmq_setsockopt(workers[i], ZMQ_SNDBUF, &sndbuf, sizeof(sndbuf));
-        // zmq_setsockopt(workers[i], ZMQ_SNDHWM, &sndhwm, sizeof(sndhwm));
+        zmq_setsockopt(workers[i], ZMQ_SNDBUF, &sndbuf, sizeof(sndbuf));
+        zmq_setsockopt(workers[i], ZMQ_SNDHWM, &sndhwm, sizeof(sndhwm));
         char endpoint[50];
         snprintf(endpoint, sizeof(endpoint), "tcp://127.0.0.1:%s", argv[i+2]);
         // printf("Distributor publishing on %s\n", endpoint);
         zmq_connect(workers[i], endpoint);
         poll_items[i].socket = workers[i];
+        poll_items[i].revents = 0;
+        poll_items[i].fd = -1;
         poll_items[i].events = ZMQ_POLLIN;
         workers_job[i] = 0;
     }
@@ -157,6 +159,15 @@ int main(int argc, char **argv) {
     node = hashmap_to_tree(&words, node);
 
     traverseDescending(node);
+
+    freeTree(node);
+
+    free(msg_queue);
+    for (int i = 0;i < num_workers;i++) {
+        free(worker_queue[i]);
+    }
+
+    free_hashmap(&words);
 
     // for (int i = 0;i < num_workers;i++) {
     //     printf("worker %d : %d\n", i, workers_job[i]);
