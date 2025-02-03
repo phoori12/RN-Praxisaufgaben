@@ -8,6 +8,7 @@
 enum jobState {
     MAP,
     RED,
+    IDLE
 };
 
 void read_file_in_chunks(FILE *file, size_t limit, QueueList** queue);
@@ -18,6 +19,10 @@ int main(int argc, char **argv) {
 
     int num_workers = argc - 2;
 
+    QueueList* worker_queue[num_workers];
+    for (int i = 0; i < num_workers;i++) {
+        worker_queue[i] = NULL;
+    }
     QueueList* msg_queue = NULL;
     HashMap* words[HASH_SIZE*4] = {NULL};
     Tree *node = NULL;
@@ -37,6 +42,18 @@ int main(int argc, char **argv) {
     enum jobState workers_states[num_workers];
     zmq_pollitem_t poll_items[num_workers];
 
+    int workers_job[num_workers];
+
+    // distribute jobs to each worker queue
+    while (msg_queue != NULL) {
+        for (int i = 0; i < num_workers;i++) {
+            char msg[MAX_PAYLOAD_LEN];
+            poll_from_queue(&msg_queue, msg, sizeof(msg)); 
+            add_to_queue(&worker_queue[i], msg);
+        }
+    }
+    
+
     // int sndhwm = 1500;  // Set HWM above your expected message size
     // int sndbuf = 1500;  // Set buffer size above your expected message size
     
@@ -51,22 +68,26 @@ int main(int argc, char **argv) {
         zmq_connect(workers[i], endpoint);
         poll_items[i].socket = workers[i];
         poll_items[i].events = ZMQ_POLLIN;
+        workers_job[i] = 0;
     }
 
     // Send initial request to all workers
     for (int i = 0; i < num_workers; i++) {
         char request[MAX_MSG_LEN];
         char msg[MAX_PAYLOAD_LEN];
-        poll_from_queue(&msg_queue, msg, sizeof(msg)); 
+        poll_from_queue(&worker_queue[i], msg, sizeof(msg)); 
         snprintf(request, sizeof(request), "map%s", msg);
         zmq_send(workers[i], request, strlen(request) + 1, 0);
         workers_states[i] = MAP;
+        workers_job[i]++;
     }
 
     // Poll for responses
     int active_workers = num_workers;
+    int next_worker = 0;
     while (active_workers > 0) {
         zmq_poll(poll_items, num_workers, -1); // Wait indefinitely
+        
 
         for (int i = 0; i < num_workers; i++) {
             if (poll_items[i].revents & ZMQ_POLLIN) {
@@ -74,6 +95,7 @@ int main(int argc, char **argv) {
                 zmq_recv(workers[i], response, sizeof(response) - 1, 0);
                 response[MAX_MSG_LEN-1] = '\0';
                 // printf("Received from worker %d: %s\n", i, response);
+
 
                 if (strcmp(response, "rip") == 0) {  // If worker signals termination
                     // printf("recieved rip cmd\n");
@@ -89,17 +111,23 @@ int main(int argc, char **argv) {
                         snprintf(request, sizeof(request), "red%s", response);
                         zmq_send(workers[i], request, strlen(request) + 1, 0);
                         workers_states[i] = RED;
+                        workers_job[i]++;
                     } else if (workers_states[i] == RED) {
+                        // saves key,values
                         split_and_store(response, &words);
-                        if (msg_queue != NULL) {
+                        
+                        workers_states[i] = IDLE;
+
+                        if (worker_queue[i] != NULL) {
                             // saves key,values to tree and send next map
                             // printf("sending another map cmd\n");
                             char request[MAX_MSG_LEN];
                             char msg[MAX_PAYLOAD_LEN];
-                            poll_from_queue(&msg_queue, msg, sizeof(msg)); 
+                            poll_from_queue(&worker_queue[i], msg, sizeof(msg)); 
                             snprintf(request, sizeof(request), "map%s", msg);
                             zmq_send(workers[i], request, strlen(request) + 1, 0);
                             workers_states[i] = MAP;
+                            workers_job[i]++;
                         } else {
                             // save key
                             // printf("sending rip2 cmd\n");
@@ -129,6 +157,10 @@ int main(int argc, char **argv) {
     node = hashmap_to_tree(&words, node);
 
     traverseDescending(node);
+
+    // for (int i = 0;i < num_workers;i++) {
+    //     printf("worker %d : %d\n", i, workers_job[i]);
+    // }
 
     return 0;
 }
