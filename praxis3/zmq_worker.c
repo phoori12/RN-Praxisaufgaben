@@ -14,13 +14,22 @@ typedef struct {
 
 void filter_non_alpha(char *str) {
     int i = 0, j = 0;
+    int last_was_space = 0;
+
     while (str[i] != '\0') {
-        if (isalpha(str[i]) || str[i] == ' ') {
-            str[j++] = str[i];
+        if (isalpha(str[i])) {
+            str[j++] = tolower(str[i]);
+            last_was_space = 0;
+        } else if (!last_was_space) {
+            str[j++] = ' ';
+            last_was_space = 1;
         }
         i++;
     }
-    str[j] = '\0';  // Null-terminate the filtered string
+    if (j > 0 && str[j - 1] == ' ') {
+        j--;  // Remove trailing space
+    }
+    str[j] = '\0'; 
 }
 
 char* map(char *text) {
@@ -32,15 +41,17 @@ char* map(char *text) {
     // Hashmap (array of pointers to linked lists)
     HashMap *hashmap[HASH_SIZE] = {NULL};
     QueueList* word_order = NULL;
-
-    char *token = strtok(text, " .,\n"); 
+    
+    
+    char *token = strtok(text, " "); 
     while (token != NULL) {
-        to_lowercase(token);
+        // to_lowercase(token);
         insert_word(token, &hashmap, &word_order);
-        token = strtok(NULL, " .,\n"); 
+        token = strtok(NULL, " "); 
     }
 
     // // Build result string using word order array
+  
     while (word_order != NULL) {
         char word[MAX_WORD_LEN];
         poll_from_queue(&word_order, word, sizeof(word)); // poll like this to prevent memory leakss
@@ -59,8 +70,7 @@ char* map(char *text) {
             }
         }
     }
-
-    result[strlen(result)] = '\0';
+    // printf("%s:\t%d\n", result, strlen(result));
     free_hashmap(hashmap);
     return result;
 
