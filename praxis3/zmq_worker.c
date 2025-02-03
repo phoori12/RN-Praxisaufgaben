@@ -33,11 +33,11 @@ char* map(char *text) {
     HashMap *hashmap[HASH_SIZE] = {NULL};
     QueueList* word_order = NULL;
 
-    char *token = strtok(text, " .,\n"); // TODO: FIX DELIMITERS
+    char *token = strtok(text, " .,\n"); 
     while (token != NULL) {
         to_lowercase(token);
         insert_word(token, &hashmap, &word_order);
-        token = strtok(NULL, " .,\n"); // TODO: FIX DELIMITERS
+        token = strtok(NULL, " .,\n"); 
     }
 
     // // Build result string using word order array
@@ -122,7 +122,7 @@ static void *worker_routine (void *arg) {
     while (1) {
         char string[MAX_MSG_LEN];
         zmq_recv(worker, string, sizeof(string) - 1, 0);
-        printf ("Received request: [%s]\n", string);
+        // printf ("Received request: [%s]\n", string);
 
 
         if (strncmp(string, "map", 3) == 0) {

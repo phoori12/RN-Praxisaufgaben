@@ -113,22 +113,22 @@ int main(int argc, char **argv) {
         }
     }
 
-    // print tree
-
-    
-    printf("word,frequency\n");
-    node = hashmap_to_tree(&words, node);
-
-
-    traverseDescending(node);
-
     // printf("cleaning up\n");
     // Cleanup
     for (int i = 0; i < num_workers; i++) {
         zmq_close(workers[i]);
     }
+
     // printf("clearing context\n");
+
+    
     zmq_ctx_destroy(context);
+
+    // print tree
+    printf("word,frequency\n");
+    node = hashmap_to_tree(&words, node);
+
+    traverseDescending(node);
 
     return 0;
 }
